@@ -14,3 +14,4 @@ frontend/.vite/
 coverage/
 .DS_Store
 
+.venv310/
