@@ -41,20 +41,25 @@ def upgrade() -> None:
     elif len(organizations) == 1:
         organization_id = organizations[0][0]
     elif not organizations:
-        now = datetime.now(timezone.utc).isoformat()
-        result = bind.execute(
-            sa.text(
-                "INSERT INTO organizations (name, is_active, created_at, updated_at) "
-                "VALUES (:name, :is_active, :created_at, :updated_at)"
-            ),
-            {
-                "name": "Demo Operations",
-                "is_active": True,
-                "created_at": now,
-                "updated_at": now,
-            },
+        now = datetime.now(timezone.utc)
+        organizations_table = sa.table(
+            "organizations",
+            sa.column("id", sa.Integer()),
+            sa.column("name", sa.String(160)),
+            sa.column("is_active", sa.Boolean()),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+            sa.column("updated_at", sa.DateTime(timezone=True)),
         )
-        organization_id = result.lastrowid
+        organization_id = bind.execute(
+            sa.insert(organizations_table)
+            .values(
+                name="Demo Operations",
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+            )
+            .returning(organizations_table.c.id)
+        ).scalar_one()
     else:
         raise RuntimeError(
             "Cannot choose an organization for root backfill: multiple organizations "

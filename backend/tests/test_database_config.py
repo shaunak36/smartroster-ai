@@ -57,6 +57,15 @@ def test_explicit_sqlite_url_is_resolved_without_changing_non_sqlite_urls():
     )
 
 
+def test_standard_postgres_urls_use_the_installed_psycopg_driver():
+    assert resolve_database_url("postgresql://user:pass@host/db") == (
+        "postgresql+psycopg://user:pass@host/db"
+    )
+    assert resolve_database_url("postgres://user:pass@host/db") == (
+        "postgresql+psycopg://user:pass@host/db"
+    )
+
+
 def test_alembic_and_application_share_settings_database_url():
     source = (BACKEND_DIR / "alembic" / "env.py").read_text(encoding="utf-8")
 

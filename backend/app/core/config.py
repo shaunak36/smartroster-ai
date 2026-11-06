@@ -11,8 +11,11 @@ ENV_FILE = BACKEND_DIR / ".env"
 
 
 def resolve_database_url(value: str) -> str:
-    """Resolve relative SQLite database paths from the backend directory."""
+    """Normalize Render's PostgreSQL URL and resolve relative SQLite paths."""
     url = make_url(value)
+    if url.drivername in {"postgres", "postgresql"}:
+        url = url.set(drivername="postgresql+psycopg")
+        return url.render_as_string(hide_password=False)
     if url.drivername.split("+", 1)[0] != "sqlite" or not url.database:
         return value
 

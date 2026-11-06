@@ -60,7 +60,45 @@ the default `BACKEND_DATABASE_URL=sqlite:///./smartroster.db` always refers to
 either the repository root or `backend/`. Non-SQLite URLs remain unchanged.
 
 All backend environment variables use the `BACKEND_` prefix
-(for example `BACKEND_AUTH_SECRET`).
+(for example `BACKEND_AUTH_SECRET`). PostgreSQL URLs from hosted providers can
+be supplied as `postgresql://...`; the backend selects its installed Psycopg 3
+driver automatically. SQLite remains the default for local development.
+
+## Persistent Render database (Supabase PostgreSQL)
+
+Render's local SQLite file is not durable across service restarts and deploys.
+For a persistent hosted database, create a PostgreSQL project in Supabase and
+copy its **Session pooler** URI from **Connect**. In the Render backend
+service's environment, set `BACKEND_DATABASE_URL` to that URI. Keep the URI
+private; do not commit it or paste it into chat. The app normalizes the URI to
+the Psycopg 3 driver already listed in `backend/requirements.txt`.
+
+From the `backend/` directory, use this build command:
+
+```bash
+pip install -r requirements.txt && alembic upgrade head && python -m scripts.seed_demo
+```
+
+Use this start command:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+On a brand-new hosted database, migrations create the schema and demo seeding
+creates the sample workforce. The seed does not create a login. After the
+first successful deploy, provision the admin once through the bootstrap
+endpoint using the backend's `BACKEND_BOOTSTRAP_ADMIN_TOKEN`. Moving to a new
+database does not copy existing SQLite users or custom records; export and
+import any data you need before switching the service URL. Do not point local
+development at the hosted database unless you intend to change that shared
+database.
+
+Supabase's Free plan can pause projects after a week of low activity and does
+not include automatic backups. A paused project can be resumed, but use a paid
+plan if you need continuous availability and managed backups. See Supabase's
+[project pausing policy](https://supabase.com/docs/guides/platform/free-project-pausing)
+and [connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
 ## Prerequisites
 
