@@ -2,15 +2,16 @@
 
 SmartRoster AI is a workforce roster management system for multi-brand D2C
 operations. The application uses a React/TypeScript frontend, a FastAPI
-backend, SQLAlchemy persistence, SQLite for the initial deployment, and
-Google OR-Tools CP-SAT for constraint-based scheduling.
+backend, SQLAlchemy persistence, SQLite for local development, PostgreSQL for
+the hosted database, and Google OR-Tools CP-SAT for constraint-based scheduling.
 
 ## Status
 
 Implemented: employee, brand, process and pod management; assignments;
 availability and leave; CP-SAT roster generation; coverage validation and
-conflict detection; and a React frontend. The app currently runs locally and
-is not deployed.
+conflict detection; and a React frontend. The application is deployed publicly.
+The FastAPI backend runs on Render with PostgreSQL configured through Supabase;
+the frontend is deployed separately from the backend service.
 
 ## Quick start
 
@@ -163,6 +164,26 @@ The dataset includes single-employee brands (the majority), brands with two or
 three employees, employees spanning multiple brands and processes, and shared
 process coverage. Brand scenarios are configuration data, not scheduling-engine
 constants.
+
+## Using the roster planner
+
+1. Open **Roster**, choose a year and month, and select **Generate**. Generation
+   can take a little while; keep the page open. The button and status message
+   indicate that the request is still running.
+2. Review the generated preview. A roster with zero errors can be saved;
+   warnings are informational and do not by themselves prevent saving. For
+   example, a supporting-date warning means nearby dates outside the selected
+   month were included to check weekly workload across the month boundary.
+3. Select **Save roster** to persist the preview. Generating alone does not
+   create a saved roster.
+4. Use **Manual roster change** to select a saved assignment and a replacement
+   employee, then choose **Preview change**. The backend checks the proposed
+   change against the roster rules. If it fails, review the displayed reason
+   and try a replacement that is available, eligible, and within workload
+   limits. Select **Accept change** only when you intend to save the change; it
+   creates a new roster version and keeps the previous version for audit.
+5. Review the coverage list in its own scroll area. Validation details can be
+   opened when you need to inspect individual warnings or errors.
 
 ## Troubleshooting
 
