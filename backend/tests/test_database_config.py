@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 from sqlalchemy.engine import make_url
+from alembic.config import Config
 
 from app.core.config import BACKEND_DIR, ENV_FILE, Settings, resolve_database_url
 
@@ -64,6 +65,17 @@ def test_standard_postgres_urls_use_the_installed_psycopg_driver():
     assert resolve_database_url("postgres://user:pass@host/db") == (
         "postgresql+psycopg://user:pass@host/db"
     )
+
+
+def test_alembic_config_preserves_percent_encoded_database_password():
+    database_url = (
+        "postgresql+psycopg://postgres.project:pa%40ss%25word@pooler.example:5432/postgres"
+    )
+    config = Config()
+
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+
+    assert config.get_main_option("sqlalchemy.url") == database_url
 
 
 def test_alembic_and_application_share_settings_database_url():

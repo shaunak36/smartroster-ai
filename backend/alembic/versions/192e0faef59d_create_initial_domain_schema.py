@@ -75,6 +75,17 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('date')
     )
+    op.create_table('rosters',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('year', sa.Integer(), nullable=False),
+    sa.Column('month', sa.Integer(), nullable=False),
+    sa.Column('status', sa.String(length=32), nullable=False),
+    sa.Column('current_version_id', sa.Integer(), nullable=True),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('year', 'month', name='uq_roster_period')
+    )
     op.create_table('roster_versions',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('roster_id', sa.Integer(), nullable=False),
@@ -94,18 +105,14 @@ def upgrade() -> None:
     sa.UniqueConstraint('roster_id', 'version_number', name='uq_roster_version_number')
     )
     op.create_index('ix_roster_version_status', 'roster_versions', ['roster_id', 'validation_status'], unique=False)
-    op.create_table('rosters',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('year', sa.Integer(), nullable=False),
-    sa.Column('month', sa.Integer(), nullable=False),
-    sa.Column('status', sa.String(length=32), nullable=False),
-    sa.Column('current_version_id', sa.Integer(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-    sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False),
-    sa.ForeignKeyConstraint(['current_version_id'], ['roster_versions.id'], ondelete='SET NULL'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('year', 'month', name='uq_roster_period')
-    )
+    with op.batch_alter_table('rosters') as batch_op:
+        batch_op.create_foreign_key(
+            'fk_rosters_current_version_id_roster_versions',
+            'roster_versions',
+            ['current_version_id'],
+            ['id'],
+            ondelete='SET NULL',
+        )
     op.create_table('brands',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('code', sa.String(length=32), nullable=False),
