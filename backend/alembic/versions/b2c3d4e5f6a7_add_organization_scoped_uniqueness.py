@@ -24,7 +24,10 @@ def upgrade() -> None:
         )
 
     # 2. Update public_holidays: drop global unique on date, create composite (organization_id, date)
-    with op.batch_alter_table("public_holidays") as batch_op:
+    with op.batch_alter_table(
+        "public_holidays",
+        naming_convention={"uq": "uq_%(table_name)s_%(column_0_name)s"},
+    ) as batch_op:
         # In SQLite/Alembic, column unique created an unnamed constraint or unique constraint on date
         # batch_alter_table handles dropping unique on date column and adding uq_public_holiday_org_date
         batch_op.drop_constraint("uq_public_holidays_date", type_="unique")
@@ -34,7 +37,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    with op.batch_alter_table("public_holidays") as batch_op:
+    with op.batch_alter_table(
+        "public_holidays",
+        naming_convention={"uq": "uq_%(table_name)s_%(column_0_name)s"},
+    ) as batch_op:
         batch_op.drop_constraint("uq_public_holiday_org_date", type_="unique")
         batch_op.create_unique_constraint("uq_public_holidays_date", ["date"])
 

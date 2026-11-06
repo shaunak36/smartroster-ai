@@ -17,6 +17,7 @@ from app.models import (
     Pod,
     Process,
     PublicHoliday,
+    Organization,
 )
 
 
@@ -52,6 +53,21 @@ def _get_or_create(session: Session, model, filters: dict, values: dict):
 
 def seed_demo_data(session: Session) -> DemoSeedSummary:
     """Create the deterministic assessment dataset without deleting existing rows."""
+    organizations = session.scalars(select(Organization).order_by(Organization.id)).all()
+    demo_organizations = [org for org in organizations if org.name == "Demo Operations"]
+    if len(demo_organizations) > 1:
+        raise ValueError("Multiple Demo Operations organizations exist")
+    if demo_organizations:
+        organization = demo_organizations[0]
+    elif len(organizations) == 1:
+        organization = organizations[0]
+    elif not organizations:
+        organization = Organization(name="Demo Operations", is_active=True)
+        session.add(organization)
+        session.flush()
+    else:
+        raise ValueError("Cannot seed demo data when multiple organizations exist")
+    org_id = organization.id
     process_specs = (
         ("CS", "Customer Support"),
         ("ACC", "Abandoned Cart Conversions"),
@@ -62,7 +78,10 @@ def seed_demo_data(session: Session) -> DemoSeedSummary:
     created_processes = 0
     for code, name in process_specs:
         process, created = _get_or_create(
-            session, Process, {"code": f"DEMO-{code}"}, {"name": name, "is_active": True}
+            session,
+            Process,
+            {"organization_id": org_id, "code": f"DEMO-{code}"},
+            {"name": name, "is_active": True},
         )
         processes[code] = process
         created_processes += int(created)
@@ -77,7 +96,10 @@ def seed_demo_data(session: Session) -> DemoSeedSummary:
     created_pods = 0
     for code, name in pod_specs:
         pod, created = _get_or_create(
-            session, Pod, {"code": f"DEMO-{code}"}, {"name": name, "is_active": True}
+            session,
+            Pod,
+            {"organization_id": org_id, "code": f"DEMO-{code}"},
+            {"name": name, "is_active": True},
         )
         pods[code] = pod
         created_pods += int(created)
@@ -89,7 +111,7 @@ def seed_demo_data(session: Session) -> DemoSeedSummary:
         employee, created = _get_or_create(
             session,
             Employee,
-            {"employee_code": f"DEMO-E{index:02d}"},
+            {"organization_id": org_id, "employee_code": f"DEMO-E{index:02d}"},
             {
                 "name": f"Demo Operator {index:02d}",
                 "email": f"demo.operator{index:02d}@example.invalid",
@@ -127,7 +149,7 @@ def seed_demo_data(session: Session) -> DemoSeedSummary:
         brand, created = _get_or_create(
             session,
             Brand,
-            {"code": f"DEMO-{code}"},
+            {"organization_id": org_id, "code": f"DEMO-{code}"},
             {"name": name, "pod_id": pods[pod_code].id, "is_active": True},
         )
         brands[code] = brand
@@ -230,7 +252,7 @@ def seed_demo_data(session: Session) -> DemoSeedSummary:
         _, created = _get_or_create(
             session,
             PublicHoliday,
-            {"date": holiday_date},
+            {"organization_id": org_id, "date": holiday_date},
             {"name": name, "scope": "company", "is_active": True},
         )
         created_holidays += int(created)
