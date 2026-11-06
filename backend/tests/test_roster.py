@@ -2,7 +2,13 @@ from datetime import date
 
 import pytest
 
-from app.models import Employee, EmployeeAssignment, Roster, RosterAssignment
+from app.models import (
+    Employee,
+    EmployeeAssignment,
+    Organization,
+    Roster,
+    RosterAssignment,
+)
 from app.services.roster import (
     ManualChange,
     RosterConcurrencyError,
@@ -40,6 +46,25 @@ def test_pipeline_generates_and_persists_valid_roster(db_session):
         and row.process_id == process.id
         for row in version.assignments
     )
+
+
+def test_generated_roster_save_persists_employee_organization(db_session):
+    employee, brand, process = configured_employee(db_session)
+    organization = Organization(name="Roster Save Org", is_active=True)
+    db_session.add(organization)
+    db_session.flush()
+    employee.organization_id = organization.id
+    brand.organization_id = organization.id
+    process.organization_id = organization.id
+    db_session.commit()
+
+    pipeline = run_roster_pipeline(db_session, 2026, 1)
+    version = persist_roster(db_session, pipeline)
+
+    roster = db_session.get(Roster, version.roster_id)
+    assert roster is not None
+    assert roster.organization_id == organization.id
+    assert roster.current_version_id == version.id
 
 
 def test_invalid_roster_is_rejected_without_persistence(db_session):

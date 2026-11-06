@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     AssignmentSource,
+    Employee,
     Roster,
     RosterAssignment,
     RosterVersion,
@@ -343,7 +344,22 @@ def persist_roster(
     ) is not None:
         raise RosterPersistenceError("A roster already exists for this period")
 
-    roster = Roster(year=pipeline.year, month=pipeline.month)
+    employee_ids = {item.employee_id for item in pipeline.assignments}
+    organization_ids = session.scalars(
+        select(Employee.organization_id)
+        .where(Employee.id.in_(employee_ids))
+        .distinct()
+    ).all() if employee_ids else []
+    if len(organization_ids) > 1:
+        raise RosterPersistenceError(
+            "A roster cannot include employees from multiple organizations"
+        )
+    organization_id = organization_ids[0] if organization_ids else None
+    roster = Roster(
+        organization_id=organization_id,
+        year=pipeline.year,
+        month=pipeline.month,
+    )
     version = RosterVersion(
         roster=roster,
         version_number=1,

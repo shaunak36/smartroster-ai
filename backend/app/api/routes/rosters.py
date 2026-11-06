@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -41,6 +43,7 @@ router = APIRouter(
     tags=["rosters"],
     dependencies=[Depends(get_current_user)],
 )
+logger = logging.getLogger(__name__)
 
 
 def _diagnostic_payload(item):
@@ -231,6 +234,11 @@ def save_roster(payload: RosterSaveRequest, db: Session = Depends(get_db)):
     try:
         version = persist_roster(db, pipeline)
     except RosterPersistenceError as exc:
+        logger.exception(
+            "Roster persistence failed for %04d-%02d",
+            payload.year,
+            payload.month,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "roster_persistence_failed", "message": str(exc)},
