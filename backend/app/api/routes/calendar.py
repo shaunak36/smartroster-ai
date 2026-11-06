@@ -30,8 +30,11 @@ from app.services.api import (
     get_or_404,
     validate_period,
 )
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/api", tags=["calendars"])
+router = APIRouter(
+    prefix="/api", tags=["calendars"], dependencies=[Depends(get_current_user)]
+)
 
 
 def validate_brand_process(db: Session, brand_id: int, process_id: int):

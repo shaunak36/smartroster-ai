@@ -34,8 +34,11 @@ from app.services.api import (
     resolve_availability,
     validate_period,
 )
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/api", tags=["availability"])
+router = APIRouter(
+    prefix="/api", tags=["availability"], dependencies=[Depends(get_current_user)]
+)
 
 
 def paged(db, query, model, offset, limit):

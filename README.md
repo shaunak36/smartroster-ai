@@ -5,10 +5,33 @@ operations. The application uses a React/TypeScript frontend, a FastAPI
 backend, SQLAlchemy persistence, SQLite for the initial deployment, and
 Google OR-Tools CP-SAT for constraint-based scheduling.
 
-## Stage 1 status
+## Status
 
-Stage 1 establishes the project foundation and documents the domain. It does
-not implement scheduling, CRUD APIs, database models, or seed data yet.
+Implemented: employee, brand, process and pod management; assignments;
+availability and leave; CP-SAT roster generation; coverage validation and
+conflict detection; and a React frontend. The app currently runs locally and
+is not deployed.
+
+## Quick start
+
+1. Backend: follow "Backend setup" below. In `backend/.env`, set
+   `BACKEND_AUTH_SECRET` (32+ characters) and `BACKEND_BOOTSTRAP_ADMIN_TOKEN`
+   (any value).
+2. Seed the demo data: `python -m scripts.seed_demo` (from `backend/`).
+3. Create the admin (the seed does not create users). Open
+   http://localhost:8000/docs and run `POST /api/auth/bootstrap-admin` with:
+   ```json
+   {
+     "email": "admin@demo.local",
+     "password": "Admin@123456",
+     "full_name": "Admin",
+     "organization_name": "SmartRoster Demo",
+     "bootstrap_token": "<the token you set in .env>"
+   }
+   ```
+   The password must be at least 12 characters.
+4. Frontend: follow "Frontend setup" below, open http://localhost:5173 and log
+   in with `admin@demo.local` / `Admin@123456`.
 
 ## Architecture
 
@@ -18,11 +41,11 @@ frontend/  React + TypeScript + Vite + Tailwind CSS
     | REST/JSON
     v
 backend/app/
-    api/       FastAPI route modules (introduced in later stages)
+    api/       FastAPI route modules
     core/      Settings and application configuration
     db/        SQLAlchemy engine/session and Alembic integration
-    models/    Normalized persistence models (introduced in Stage 2)
-    schemas/   Pydantic API contracts (introduced in later stages)
+    models/    Normalized persistence models
+    schemas/   Pydantic API contracts
     services/  Scheduling, validation, reporting, and export services
 ```
 
@@ -30,39 +53,90 @@ SQLite is the initial database. Database access is isolated behind SQLAlchemy
 so a production deployment can move to PostgreSQL without changing domain
 services.
 
+The backend resolves its `.env` file and relative SQLite database paths from
+the `backend/` directory, not from the current working directory. Therefore
+the default `BACKEND_DATABASE_URL=sqlite:///./smartroster.db` always refers to
+`backend/smartroster.db` when the application or Alembic is launched from
+either the repository root or `backend/`. Non-SQLite URLs remain unchanged.
+
+All backend environment variables use the `BACKEND_` prefix
+(for example `BACKEND_AUTH_SECRET`).
+
 ## Prerequisites
 
-- Python 3.10 or newer
+- Python 3.10 (3.10 to 3.12 recommended; the pinned `ortools` version has no
+  build for Python 3.14)
 - Node.js 20 or newer
 - npm 10 or newer
 
 ## Backend setup (Windows PowerShell)
 
 ```powershell
-cd "C:\Users\Shaunak paul\smartroster-ai\backend"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+cd backend
+python -m venv .venv310
+.\.venv310\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 Copy-Item .env.example .env
+# edit .env: set BACKEND_AUTH_SECRET and BACKEND_BOOTSTRAP_ADMIN_TOKEN
 alembic upgrade head
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 ```
 
-The backend health endpoint is available at
-`http://127.0.0.1:8000/health`. OpenAPI documentation will be available at
-`http://127.0.0.1:8000/docs` as routes are added.
+Run `uvicorn` from the `backend/` folder. The health endpoint is
+`http://127.0.0.1:8000/health` and the API docs are at
+`http://127.0.0.1:8000/docs`.
+
+To launch from the repository root instead:
+
+```powershell
+$env:PYTHONPATH = ".\backend"
+.\.venv310\Scripts\python.exe -m uvicorn app.main:app --reload
+```
 
 ## Frontend setup (Windows PowerShell)
 
 ```powershell
-cd "C:\Users\Shaunak paul\smartroster-ai\frontend"
+cd frontend
 npm install
 Copy-Item .env.example .env
 npm run dev
 ```
 
 The Vite development server normally runs at `http://localhost:5173`.
+
+## Assessment demo data
+
+After applying the migrations and configuring the backend environment, create
+the reproducible fictional assessment dataset from `backend/`:
+
+```powershell
+python -m scripts.seed_demo
+```
+
+The seed creates 30 fictional employees, four processes, four pods with leads,
+eight brands, effective employee assignments, operating and workload rules,
+weekly-off patterns, and public holidays. It uses `DEMO-` codes and
+get-or-create behavior, so rerunning it does not delete or overwrite unrelated
+rows. It does not create users or print credentials; create the administrator
+through the bootstrap endpoint as described in "Quick start".
+
+The dataset includes single-employee brands (the majority), brands with two or
+three employees, employees spanning multiple brands and processes, and shared
+process coverage. Brand scenarios are configuration data, not scheduling-engine
+constants.
+
+## Troubleshooting
+
+- **"Failed to fetch" on login:** the backend is not running, or the frontend
+  API URL / CORS origin does not match. Start the backend and check
+  `BACKEND_CORS_ORIGINS` in `backend/.env`.
+- **`No module named 'app'`:** run `uvicorn` from the `backend/` folder.
+- **`Administrator provisioning is not configured` (503):** set
+  `BACKEND_BOOTSTRAP_ADMIN_TOKEN` in `backend/.env` and restart the backend.
+- **`Administrator provisioning is already complete` (409):** a user already
+  exists; log in with that user's credentials.
+- **`pip` fails on `ortools`:** use Python 3.10 to 3.12, not 3.14.
 
 ## Business assumptions
 
@@ -107,7 +181,7 @@ The Vite development server normally runs at `http://localhost:5173`.
 
 ## Data model
 
-The normalized model will include:
+The normalized model includes:
 
 - `employees`, `pods`, `brands`, and `processes`
 - effective-dated `employee_assignments`,
@@ -121,16 +195,16 @@ The normalized model will include:
 - `validation_runs`, `scheduling_conflicts`, and `roster_change_history`
 
 Foreign keys, indexes, unique constraints, and transactional service checks
-will prevent duplicate assignments and ambiguous active rule periods.
+prevent duplicate assignments and ambiguous active rule periods.
 
 ## Scheduling and validation
 
-CP-SAT assignment variables will represent an employee, date, brand, and
-process. Hard constraints will enforce effective eligibility, availability,
-approved leave, weekly-off resolution, assignment-count capacity, workload
-capacity, operating calendars, required coverage, and minimum staffing.
+CP-SAT assignment variables represent an employee, date, brand, and process.
+Hard constraints enforce effective eligibility, availability, approved leave,
+weekly-off resolution, assignment-count capacity, workload capacity, operating
+calendars, required coverage, and minimum staffing.
 
-Soft objectives will balance workload, distribute weekly offs, prefer primary
+Soft objectives balance workload, distribute weekly offs, prefer primary
 assignments, preserve existing assignments, and avoid unnecessary use of
 scarce backup employees.
 
@@ -141,27 +215,48 @@ Solver statuses:
 - `INFEASIBLE`: no solution satisfies all hard constraints.
 - `UNKNOWN`: the solver did not determine a result within its limits.
 
-Infeasibility diagnostics will identify each affected date, brand, process,
+Infeasibility diagnostics identify each affected date, brand, process,
 required coverage, minimum staffing, available qualified capacity, eligible
 employees, backup employees, and the blocking reasons.
 
-## Sample-data plan
+## Tell Us How You Think
 
-The seed dataset will contain at least 30 employees, 10 fictional brands,
-four processes, and three pods with pod leads. Approximately 80% of brands
-will have one dedicated employee, with the remaining brands having two or
-three employees. The data will also include employees spanning multiple
-brands/processes, shared process coverage, varied calendars, leaves, weekly
-offs, holidays, capacity limits, and effective-dated changes. Brand A through
-E scenarios will be configuration data, not scheduling-engine constants.
+1. **Data model.** Employees, brands, processes and pods are normalized
+   tables. Effective-dated assignments link an employee to a brand and a
+   process, so one person can cover several. Operating calendars belong to the
+   brand/process and are kept separate from employee availability, so a brand
+   can require coverage on a day a given employee is off.
 
-## Development stages
+2. **Roster generation and validation.** A CP-SAT model has one variable per
+   employee, date, brand and process. Hard constraints cover eligibility,
+   leave, weekly offs, operating calendars, required coverage, minimum
+   staffing and capacity. A roster is valid only when the solver returns
+   OPTIMAL or FEASIBLE with zero hard-constraint violations.
 
-1. Project foundation and domain documentation (current stage).
-2. SQLAlchemy models, migrations, and persistence tests.
-3. Configuration and availability/calendar APIs.
-4. CP-SAT scheduling engine and diagnostics.
-5. Roster versioning, revalidation, and manual-change APIs.
-6. Reports, exports, and seed data.
-7. Frontend modules and API integration.
-8. End-to-end testing and deployment documentation.
+3. **Single-resource vs multi-employee brands.** Both use the same coverage
+   rules. With one employee, any absence on a required day leaves nobody to
+   cover it, so it is flagged. With several employees, the solver checks
+   whether the others can absorb the work within their capacity and
+   eligibility.
+
+4. **Sole employee unavailable.** The date is reported as a conflict showing
+   the brand, process, required coverage, eligible employees and blocking
+   reasons, so the operations manager can decide on a resolution such as a
+   backup resource or a leave change.
+
+5. **Conflicting requirements or insufficient staffing.** Mandatory
+   constraints outrank preferences. INFEASIBLE or UNKNOWN results are never
+   presented as valid rosters, and diagnostics explain what blocked them.
+
+6. **Automation vs human control.** Generation, validation and revalidation
+   are automated. Approval, manual overrides and resolution of conflicts that
+   cannot be solved automatically stay with the operations manager, because
+   those involve judgement about people and client commitments.
+
+7. **If the company doubled its team and brands.** Move from SQLite to
+   PostgreSQL, run solves as background jobs, split solves per pod or brand
+   group to keep the models small, and add pagination and caching to the views.
+
+8. **One more week.** Deploy the app publicly, record the demo walkthrough,
+   add backup-resource recommendations, and automate roster regeneration after
+   approved leave or availability changes.

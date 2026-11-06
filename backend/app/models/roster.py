@@ -59,6 +59,9 @@ class Roster(TimestampMixin, Base):
     __table_args__ = (UniqueConstraint("year", "month", name="uq_roster_period"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True
+    )
     year: Mapped[int] = mapped_column(Integer, nullable=False)
     month: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[RosterStatus] = mapped_column(

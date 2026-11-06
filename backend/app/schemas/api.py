@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -392,3 +392,63 @@ class ConflictRead(APIModel):
     process_id: int | None
     message: str
     is_resolved: bool
+
+
+class RosterPeriodRequest(APIModel):
+    year: int = Field(ge=2000, le=2100)
+    month: int = Field(ge=1, le=12)
+
+
+class RosterAssignmentPayload(APIModel):
+    employee_id: int
+    date: date
+    brand_id: int
+    process_id: int
+    workload_units: int | None = Field(default=None, ge=0)
+
+
+class RosterValidationResponse(APIModel):
+    is_valid: bool
+    error_count: int
+    warning_count: int
+    diagnostics: list[dict]
+    affected_employee_ids: list[int]
+    affected_dates: list[date]
+
+
+class RosterPreviewResponse(APIModel):
+    year: int
+    month: int
+    solver_status: SolverStatus
+    assignments: list[RosterAssignmentPayload]
+    validation: RosterValidationResponse
+
+
+class RosterSaveRequest(RosterPeriodRequest):
+    solver_status: SolverStatus
+    assignments: list[RosterAssignmentPayload]
+
+
+class ManualRosterChange(APIModel):
+    operation: Literal["add", "remove", "reassign", "replace"]
+    assignment: RosterAssignmentPayload | None = None
+    previous_assignment: RosterAssignmentPayload | None = None
+
+
+class ManualRosterRequest(ManualRosterChange):
+    expected_version_id: int
+    changed_by: str = Field(min_length=1, max_length=160)
+
+
+class ManualRosterPreviewResponse(APIModel):
+    roster_id: int
+    source_version_id: int
+    proposed_assignments: list[RosterAssignmentPayload]
+    validation: RosterValidationResponse
+
+
+class RosterVersionComparisonResponse(APIModel):
+    first_version_id: int
+    second_version_id: int
+    added: list[RosterAssignmentPayload]
+    removed: list[RosterAssignmentPayload]

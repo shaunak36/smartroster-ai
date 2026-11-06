@@ -185,6 +185,63 @@ def test_resolves_capacity_compatibility_workload_and_iso_boundary(db_session):
     )
 
 
+def test_snapshot_exposes_date_groups_and_exact_assignment_eligibility(db_session):
+    employee, brand, process = configured_employee(db_session)
+    assignment = employee.assignments[0]
+    assignment.effective_start_date = date(2026, 1, 30)
+    assignment.effective_end_date = date(2026, 2, 1)
+    db_session.commit()
+
+    snapshot = ConfigurationResolver(db_session).resolve(
+        date(2026, 1, 31), date(2026, 2, 1)
+    )
+    assert snapshot.requested_dates == (date(2026, 1, 31), date(2026, 2, 1))
+    assert snapshot.supporting_dates == (
+        date(2026, 1, 26),
+        date(2026, 1, 27),
+        date(2026, 1, 28),
+        date(2026, 1, 29),
+        date(2026, 1, 30),
+    )
+    assert snapshot.horizon_dates == snapshot.dates
+    assert all(
+        item.target_date >= date(2026, 1, 30)
+        and item.target_date <= date(2026, 2, 1)
+        for item in snapshot.assignment_eligibility
+    )
+    assert snapshot.assignments[0].effective_start_date == date(2026, 1, 30)
+    assert snapshot.assignments[0].effective_end_date == date(2026, 2, 1)
+
+
+def test_employee_capacity_inherits_defaults_and_detects_week_conflict(db_session):
+    employee, _, _ = configured_employee(db_session)
+    db_session.add_all([
+        EmployeeWorkloadRule(
+            employee_id=employee.id,
+            effective_start_date=date(2026, 1, 26),
+            effective_end_date=date(2026, 1, 28),
+            weekly_capacity_units=40,
+        ),
+        EmployeeWorkloadRule(
+            employee_id=employee.id,
+            effective_start_date=date(2026, 1, 29),
+            effective_end_date=date(2026, 2, 1),
+            weekly_capacity_units=32,
+        ),
+    ])
+    db_session.commit()
+
+    with pytest.raises(ConfigurationResolutionError) as error:
+        ConfigurationResolver(db_session).resolve(
+            date(2026, 1, 31), date(2026, 2, 1)
+        )
+    assert any(
+        item.code == "conflicting_weekly_capacity"
+        and item.employee_id == employee.id
+        for item in error.value.diagnostics
+    )
+
+
 def test_ambiguous_configuration_is_rejected(db_session):
     employee, brand, process = configured_employee(db_session)
     db_session.add(BrandProcessOperatingRule(

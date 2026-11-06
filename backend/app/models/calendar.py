@@ -117,6 +117,9 @@ class PublicHoliday(TimestampMixin, Base):
     __tablename__ = "public_holidays"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    organization_id: Mapped[int | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True
+    )
     date: Mapped[date] = mapped_column(Date, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     scope: Mapped[str] = mapped_column(String(80), nullable=False)

@@ -26,8 +26,23 @@ from app.services.api import (
     get_or_404,
     page_query,
 )
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/api", tags=["organization"])
+router = APIRouter(
+    prefix="/api", tags=["organization"], dependencies=[Depends(get_current_user)]
+)
+
+
+def _page(items, total: int, offset: int, limit: int, schema):
+    return {
+        "items": [
+            schema.model_validate(item).model_dump(mode="json")
+            for item in items
+        ],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.get("/employees", response_model=dict)
@@ -37,7 +52,7 @@ def list_employees(
     db: Session = Depends(get_db),
 ):
     items, total = page_query(db, Employee, offset, limit)
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return _page(items, total, offset, limit, EmployeeRead)
 
 
 @router.post("/employees", response_model=EmployeeRead, status_code=status.HTTP_201_CREATED)
@@ -90,7 +105,7 @@ def list_pods(
     db: Session = Depends(get_db),
 ):
     items, total = page_query(db, Pod, offset, limit)
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return _page(items, total, offset, limit, PodRead)
 
 
 @router.post("/pods", response_model=PodRead, status_code=status.HTTP_201_CREATED)
@@ -135,7 +150,7 @@ def list_brands(
     db: Session = Depends(get_db),
 ):
     items, total = page_query(db, Brand, offset, limit)
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return _page(items, total, offset, limit, BrandRead)
 
 
 @router.post("/brands", response_model=BrandRead, status_code=status.HTTP_201_CREATED)
@@ -185,7 +200,7 @@ def list_processes(
     db: Session = Depends(get_db),
 ):
     items, total = page_query(db, Process, offset, limit)
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return _page(items, total, offset, limit, ProcessRead)
 
 
 @router.post("/processes", response_model=ProcessRead, status_code=status.HTTP_201_CREATED)

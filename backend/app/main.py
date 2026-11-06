@@ -2,9 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.assignments import router as assignments_router
+from app.api.routes.auth import router as auth_router
 from app.api.routes.availability import router as availability_router
 from app.api.routes.calendar import router as calendar_router
 from app.api.routes.organization import router as organization_router
+from app.api.routes.rosters import router as rosters_router
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -20,6 +22,8 @@ app.add_middleware(
 )
 
 app.include_router(organization_router)
+app.include_router(auth_router)
+app.include_router(rosters_router)
 app.include_router(assignments_router)
 app.include_router(calendar_router)
 app.include_router(availability_router)

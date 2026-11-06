@@ -30,8 +30,13 @@ from app.services.api import (
     page_query,
     validate_period,
 )
+from app.services.auth import get_current_user
 
-router = APIRouter(prefix="/api", tags=["employee assignments"])
+router = APIRouter(
+    prefix="/api",
+    tags=["employee assignments"],
+    dependencies=[Depends(get_current_user)],
+)
 
 
 def validate_assignment_context(db: Session, employee_id: int, brand_id: int, process_id: int):
@@ -52,7 +57,15 @@ def list_assignments(
         query = query.where(EmployeeAssignment.employee_id == employee_id)
     items = db.scalars(query.order_by(EmployeeAssignment.id).offset(offset).limit(limit)).all()
     total = len(db.scalars(query).all())
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return {
+        "items": [
+            AssignmentRead.model_validate(item).model_dump(mode="json")
+            for item in items
+        ],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.post("/assignments", response_model=AssignmentRead, status_code=status.HTTP_201_CREATED)

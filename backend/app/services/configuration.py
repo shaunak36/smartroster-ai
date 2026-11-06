@@ -60,12 +60,37 @@ class ResolvedAssignment:
     employee_id: int
     brand_id: int
     process_id: int
+    effective_start_date: date
+    effective_end_date: date | None
+    skill_level: int
+    is_primary: bool
+
+
+@dataclass(frozen=True)
+class AssignmentEligibility:
+    employee_id: int
+    brand_id: int
+    process_id: int
+    target_date: date
     skill_level: int
     is_primary: bool
 
 
 @dataclass(frozen=True)
 class ResolvedCapacity:
+    daily_capacity_units: int | None
+    weekly_capacity_units: int | None
+    monthly_capacity_units: int | None
+    max_assignments_per_day: int | None
+    source_rule_id: int | None
+
+
+@dataclass(frozen=True)
+class ResolvedEmployeeCapacity:
+    """Employee-wide limits inherit defaults when a rule field is unset."""
+
+    employee_id: int
+    target_date: date
     daily_capacity_units: int | None
     weekly_capacity_units: int | None
     monthly_capacity_units: int | None
@@ -119,11 +144,16 @@ class ConfigurationSnapshot:
     requested_end: date
     horizon_start: date
     horizon_end: date
+    requested_dates: tuple[date, ...]
+    supporting_dates: tuple[date, ...]
+    horizon_dates: tuple[date, ...]
     dates: tuple[date, ...]
     employees: tuple[int, ...]
     assignments: tuple[ResolvedAssignment, ...]
+    assignment_eligibility: tuple[AssignmentEligibility, ...]
     availabilities: tuple[ResolvedAvailability, ...]
     capacities: tuple[tuple[int, int, int, date, ResolvedCapacity], ...]
+    employee_capacities: tuple[ResolvedEmployeeCapacity, ...]
     compatibilities: tuple[ResolvedCompatibility, ...]
     process_workloads: tuple[ResolvedWorkload, ...]
     operating_rules: tuple[ResolvedOperatingRule, ...]
@@ -286,8 +316,11 @@ class ConfigurationResolver:
         if end < start:
             raise ValueError("Scheduling end date must not precede start date")
         horizon_start, horizon_end = expanded_iso_week_horizon(start, end)
-        dates = _dates(horizon_start, horizon_end)
+        horizon_dates = _dates(horizon_start, horizon_end)
         requested_dates = _dates(start, end)
+        supporting_dates = tuple(
+            target for target in horizon_dates if target not in requested_dates
+        )
         diagnostics: list[ConfigurationDiagnostic] = []
 
         employees = self.session.scalars(
@@ -338,12 +371,31 @@ class ConfigurationResolver:
                 and item.brand_id in active_brand_ids
                 and item.process_id in active_process_ids
                 and item.is_active
-                and any(_in_period(item, target) for target in dates)
+                and any(_in_period(item, target) for target in horizon_dates)
             ):
                 assignments.append(ResolvedAssignment(
                     item.employee_id, item.brand_id, item.process_id,
+                    item.effective_start_date, item.effective_end_date,
                     item.skill_level, item.is_primary,
                 ))
+
+        assignment_eligibility = tuple(
+            AssignmentEligibility(
+                assignment.employee_id,
+                assignment.brand_id,
+                assignment.process_id,
+                target,
+                assignment.skill_level,
+                assignment.is_primary,
+            )
+            for assignment in assignments
+            for target in horizon_dates
+            if assignment.effective_start_date <= target
+            and (
+                assignment.effective_end_date is None
+                or target <= assignment.effective_end_date
+            )
+        )
 
         availabilities = tuple(
             _resolve_availability(
@@ -351,10 +403,10 @@ class ConfigurationResolver:
                 weekly_exceptions, weekly_patterns,
             )
             for employee in employees
-            for target in dates
+            for target in horizon_dates
         )
         for employee_id in employee_ids:
-            for target in dates:
+            for target in horizon_dates:
                 if sum(
                     item.employee_id == employee_id
                     and item.date == target
@@ -416,7 +468,7 @@ class ConfigurationResolver:
             (item.employee_id, item.brand_id, item.process_id) for item in assignments
         ):
             employee = next(item for item in employees if item.id == employee_id)
-            for target in dates:
+            for target in horizon_dates:
                 rule, diagnostic = _select_specific_rule(
                     workload_rules, target, brand_id, process_id,
                     "employee workload", employee_id,
@@ -449,8 +501,68 @@ class ConfigurationResolver:
                     None if compatibility is None else compatibility.id,
                 ))
 
+        employee_capacities: list[ResolvedEmployeeCapacity] = []
+        for employee in employees:
+            for target in horizon_dates:
+                rule, diagnostic = _select_specific_rule(
+                    workload_rules,
+                    target,
+                    None,
+                    None,
+                    "employee-wide workload",
+                    employee.id,
+                )
+                if diagnostic:
+                    diagnostics.append(diagnostic)
+                employee_capacities.append(ResolvedEmployeeCapacity(
+                    employee_id=employee.id,
+                    target_date=target,
+                    daily_capacity_units=(
+                        rule.daily_capacity_units
+                        if rule and rule.daily_capacity_units is not None
+                        else employee.daily_capacity_units
+                    ),
+                    weekly_capacity_units=(
+                        rule.weekly_capacity_units
+                        if rule and rule.weekly_capacity_units is not None
+                        else employee.weekly_capacity_units
+                    ),
+                    monthly_capacity_units=(
+                        rule.monthly_capacity_units
+                        if rule and rule.monthly_capacity_units is not None
+                        else employee.monthly_capacity_units
+                    ),
+                    max_assignments_per_day=(
+                        rule.max_assignments_per_day
+                        if rule and rule.max_assignments_per_day is not None
+                        else employee.max_assignments_per_day
+                    ),
+                    source_rule_id=rule.id if rule else None,
+                ))
+
+        weekly_capacity_values: dict[tuple[int, tuple[int, int]], set[int]] = {}
+        for capacity in employee_capacities:
+            if capacity.weekly_capacity_units is None:
+                continue
+            iso = capacity.target_date.isocalendar()
+            key = (capacity.employee_id, (iso.year, iso.week))
+            weekly_capacity_values.setdefault(key, set()).add(
+                capacity.weekly_capacity_units
+            )
+        for (employee_id, iso_week), values in weekly_capacity_values.items():
+            if len(values) > 1:
+                diagnostics.append(ConfigurationDiagnostic(
+                    code="conflicting_weekly_capacity",
+                    severity=DiagnosticSeverity.ERROR,
+                    message=(
+                        f"Employee {employee_id} has conflicting weekly capacities "
+                        f"{sorted(values)} in ISO week {iso_week[0]}-{iso_week[1]}"
+                    ),
+                    employee_id=employee_id,
+                ))
+
         for brand_id, process_id in assignment_contexts:
-            for target in dates:
+            for target in horizon_dates:
                 override = next(
                     (item for item in date_overrides
                      if item.brand_id == brand_id
@@ -538,7 +650,7 @@ class ConfigurationResolver:
 
         process_workloads: list[ResolvedWorkload] = []
         for brand_id, process_id in assignment_contexts:
-            for target in dates:
+            for target in horizon_dates:
                 rule, diagnostic = _select_specific_rule(
                     process_workload_rules, target, brand_id, process_id,
                     "brand/process workload", None,
@@ -560,12 +672,22 @@ class ConfigurationResolver:
                         ))
 
         snapshot = ConfigurationSnapshot(
-            start, end, horizon_start, horizon_end, dates, employee_ids,
+            start,
+            end,
+            horizon_start,
+            horizon_end,
+            requested_dates,
+            supporting_dates,
+            horizon_dates,
+            horizon_dates,
+            employee_ids,
             tuple(sorted(assignments, key=lambda item: (
                 item.employee_id, item.brand_id, item.process_id,
             ))),
+            assignment_eligibility,
             availabilities,
             tuple(capacities),
+            tuple(employee_capacities),
             tuple(compatibilities),
             tuple(process_workloads),
             tuple(resolved_operating),

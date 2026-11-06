@@ -26,6 +26,7 @@ from app.models.organization import (
     Pod,
     Process,
 )
+from app.models.auth import Organization, OrganizationMembership, User, UserRole
 from app.models.roster import (
     AssignmentSource,
     ConflictSeverity,
@@ -74,4 +75,8 @@ __all__ = [
     "ValidationRun",
     "ValidationStatus",
     "Base",
+    "Organization",
+    "OrganizationMembership",
+    "User",
+    "UserRole",
 ]
