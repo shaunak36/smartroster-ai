@@ -15,6 +15,39 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _replace_public_holiday_unique_constraint(
+    bind, drop_name: str, create_name: str, columns: list[str]
+) -> None:
+    if bind.dialect.name == "sqlite":
+        with op.batch_alter_table(
+            "public_holidays",
+            naming_convention={"uq": "uq_%(table_name)s_%(column_0_name)s"},
+        ) as batch_op:
+            batch_op.drop_constraint(drop_name, type_="unique")
+            batch_op.create_unique_constraint(create_name, columns)
+        return
+
+    op.drop_constraint(drop_name, "public_holidays", type_="unique")
+    op.create_unique_constraint(create_name, "public_holidays", columns)
+
+
+def _date_unique_constraint_name(bind) -> str:
+    if bind.dialect.name == "sqlite":
+        # SQLite reflects this UNIQUE constraint without a name.
+        return "uq_public_holidays_date"
+
+    constraints = [
+        constraint
+        for constraint in sa.inspect(bind).get_unique_constraints("public_holidays")
+        if constraint["column_names"] == ["date"]
+    ]
+    if len(constraints) != 1 or not constraints[0]["name"]:
+        raise RuntimeError(
+            "Expected one named unique constraint on public_holidays.date"
+        )
+    return constraints[0]["name"]
+
+
 def upgrade() -> None:
     # 1. Update rosters: replace uq_roster_period with composite (organization_id, year, month)
     with op.batch_alter_table("rosters") as batch_op:
@@ -24,25 +57,21 @@ def upgrade() -> None:
         )
 
     # 2. Update public_holidays: drop global unique on date, create composite (organization_id, date)
-    with op.batch_alter_table(
-        "public_holidays",
-        naming_convention={"uq": "uq_%(table_name)s_%(column_0_name)s"},
-    ) as batch_op:
-        # In SQLite/Alembic, column unique created an unnamed constraint or unique constraint on date
-        # batch_alter_table handles dropping unique on date column and adding uq_public_holiday_org_date
-        batch_op.drop_constraint("uq_public_holidays_date", type_="unique")
-        batch_op.create_unique_constraint(
-            "uq_public_holiday_org_date", ["organization_id", "date"]
-        )
+    _replace_public_holiday_unique_constraint(
+        op.get_bind(),
+        _date_unique_constraint_name(op.get_bind()),
+        "uq_public_holiday_org_date",
+        ["organization_id", "date"],
+    )
 
 
 def downgrade() -> None:
-    with op.batch_alter_table(
-        "public_holidays",
-        naming_convention={"uq": "uq_%(table_name)s_%(column_0_name)s"},
-    ) as batch_op:
-        batch_op.drop_constraint("uq_public_holiday_org_date", type_="unique")
-        batch_op.create_unique_constraint("uq_public_holidays_date", ["date"])
+    _replace_public_holiday_unique_constraint(
+        op.get_bind(),
+        "uq_public_holiday_org_date",
+        "uq_public_holidays_date",
+        ["date"],
+    )
 
     with op.batch_alter_table("rosters") as batch_op:
         batch_op.drop_constraint("uq_roster_org_period", type_="unique")
