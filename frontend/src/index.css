@@ -75,3 +75,7 @@ label { display: grid; gap: 7px; color: #4a5870; font-size: 12px; font-weight: 7
 .roster-coverage-wrap thead { position: sticky; top: 0; z-index: 1; background: #fff; }
 .diagnostics summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 17px; font-weight: 600; list-style: none; }
 .diagnostics summary::-webkit-details-marker { display: none; }
+
+.manual-diagnostics { margin-top: 12px; padding: 12px; border-radius: 8px; background: #fff7ed; }
+.manual-diagnostics > strong { display: block; margin-bottom: 6px; color: #9a3412; font-size: 13px; }
+.manual-diagnostics .diagnostic { grid-template-columns: minmax(150px, 220px) 1fr 150px; }
