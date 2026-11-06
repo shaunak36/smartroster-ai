@@ -26,7 +26,11 @@ from app.services.api import (
     get_or_404,
     page_query,
 )
-from app.services.auth import get_current_user
+from app.services.auth import (
+    OrganizationContext,
+    get_current_user,
+    get_organization_context,
+)
 
 router = APIRouter(
     prefix="/api", tags=["organization"], dependencies=[Depends(get_current_user)]
@@ -56,10 +60,16 @@ def list_employees(
 
 
 @router.post("/employees", response_model=EmployeeRead, status_code=status.HTTP_201_CREATED)
-def create_employee(payload: EmployeeCreate, db: Session = Depends(get_db)):
+def create_employee(
+    payload: EmployeeCreate,
+    db: Session = Depends(get_db),
+    context: OrganizationContext = Depends(get_organization_context),
+):
     if payload.pod_id is not None:
         ensure_entity_exists(db, Pod, payload.pod_id, "Pod")
-    employee = Employee(**payload.model_dump())
+    employee = Employee(
+        **payload.model_dump(), organization_id=context.organization_id
+    )
     db.add(employee)
     commit_or_conflict(db, "Employee code or email already exists")
     db.refresh(employee)

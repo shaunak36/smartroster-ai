@@ -1,5 +1,32 @@
 from datetime import date
 
+from app.api.routes.organization import create_employee
+from app.models import Organization, UserRole
+from app.schemas.api import EmployeeCreate
+from app.services.auth import OrganizationContext
+
+
+def test_create_employee_sets_authenticated_organization(db_session):
+    organization = Organization(name="Employee API Organization", is_active=True)
+    db_session.add(organization)
+    db_session.commit()
+
+    employee = create_employee(
+        EmployeeCreate(
+            employee_code="EMP-ORG-API",
+            name="Organization Employee",
+            email="employee-org-api@example.com",
+        ),
+        db_session,
+        OrganizationContext(
+            user=None,
+            organization_id=organization.id,
+            role=UserRole.ADMIN,
+        ),
+    )
+
+    assert employee.organization_id == organization.id
+
 
 def employee_payload(code: str = "EMP-API"):
     return {

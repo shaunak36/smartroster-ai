@@ -6,11 +6,15 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base
+from app.models import Base, Organization, UserRole
 from app.main import app
 from app.db.session import get_db
 from app.core.config import Settings, get_settings
-from app.services.auth import get_current_user
+from app.services.auth import (
+    OrganizationContext,
+    get_current_user,
+    get_organization_context,
+)
 
 
 @pytest.fixture
@@ -51,8 +55,19 @@ def api_client() -> Iterator[TestClient]:
         with factory() as session:
             yield session
 
+    with factory() as session:
+        organization = Organization(name="API Test Organization", is_active=True)
+        session.add(organization)
+        session.commit()
+        context = OrganizationContext(
+            user=None,
+            organization_id=organization.id,
+            role=UserRole.ADMIN,
+        )
+
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_user] = lambda: None
+    app.dependency_overrides[get_organization_context] = lambda: context
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()
