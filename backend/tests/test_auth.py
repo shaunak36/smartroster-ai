@@ -3,9 +3,12 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import select
 
+from app.api.routes.auth import bootstrap_admin
 from app.core.config import Settings
 from app.models import Organization, OrganizationMembership, User, UserRole
+from app.schemas.auth import BootstrapAdminRequest
 from app.services.auth import (
     authenticate_user,
     get_organization_context,
@@ -47,6 +50,36 @@ def test_bootstrap_login_and_protected_endpoint(auth_client):
         "/api/employees", headers={"Authorization": f"Bearer {token}"}
     )
     assert protected.status_code == 200
+
+
+def test_bootstrap_admin_reuses_existing_demo_organization(db_session):
+    organization = Organization(name="Demo Operations", is_active=True)
+    db_session.add(organization)
+    db_session.commit()
+    settings = Settings(
+        auth_secret="test-auth-secret-that-is-at-least-32-characters",
+        bootstrap_admin_token="test-bootstrap-token",
+        environment="test",
+    )
+
+    user = bootstrap_admin(
+        BootstrapAdminRequest(
+            bootstrap_token="test-bootstrap-token",
+            organization_name="Demo Operations",
+            email="admin@demo.local",
+            password="strong-password-123",
+        ),
+        db_session,
+        settings,
+    )
+
+    membership = db_session.scalar(
+        select(OrganizationMembership).where(
+            OrganizationMembership.user_id == user.id
+        )
+    )
+    assert membership is not None
+    assert membership.organization_id == organization.id
 
 
 def test_login_does_not_disclose_unknown_accounts_or_password_errors(auth_client):

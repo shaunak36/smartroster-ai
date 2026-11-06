@@ -67,22 +67,26 @@ def bootstrap_admin(
             status_code=status.HTTP_409_CONFLICT,
             detail="Administrator provisioning is already complete",
         )
-    organization = Organization(
-        name=payload.organization_name.strip(),
-        is_active=True,
-    )
-    if not organization.name:
+    organization_name = payload.organization_name.strip()
+    if not organization_name:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Organization name must not be blank",
         )
+    organization = db.scalar(
+        select(Organization).where(Organization.name == organization_name)
+    )
+    if organization is None:
+        organization = Organization(name=organization_name, is_active=True)
     user = User(
         email=payload.email.strip().lower(),
         password_hash=hash_password(payload.password),
         is_active=True,
     )
     try:
-        db.add_all([organization, user])
+        if organization.id is None:
+            db.add(organization)
+        db.add(user)
         db.flush()
         db.add(OrganizationMembership(
             organization_id=organization.id,
