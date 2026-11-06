@@ -69,6 +69,15 @@ type RosterPreview = {
 };
 type Roster = { id: number; year: number; month: number; current_version_id?: number | null; status: string };
 type RosterValidation = RosterPreview["validation"];
+type AvailabilityOverride = {
+  id: number;
+  employee_id: number;
+  date: string;
+  status: string;
+  approval_status: string;
+  reason: string;
+  created_at: string;
+};
 
 class APIError extends Error {
   constructor(message: string, readonly status: number) {
@@ -274,17 +283,35 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
   const [employeeId, setEmployeeId] = useState("");
   const [date, setDate] = useState("");
   const [reason, setReason] = useState("Unavailable for assessment demonstration");
-  const [response, setResponse] = useState<Record<string, unknown> | null>(null);
+  const [overrides, setOverrides] = useState<AvailabilityOverride[]>([]);
+  const [loadingOverrides, setLoadingOverrides] = useState(true);
   const [validation, setValidation] = useState<RosterValidation | null>(null);
   const [solverStatus, setSolverStatus] = useState("");
   const [busy, setBusy] = useState(false);
+
+  async function loadOverrides() {
+    setLoadingOverrides(true);
+    try {
+      const result = await request<{ items: AvailabilityOverride[] }>(
+        "/api/availability-overrides?limit=200",
+        token,
+      );
+      setOverrides(result.items);
+    } catch (reasonValue) {
+      onError(reasonValue instanceof Error ? reasonValue.message : "Unable to load saved availability");
+    } finally {
+      setLoadingOverrides(false);
+    }
+  }
+
+  useEffect(() => { void loadOverrides(); }, [token]);
 
   async function markUnavailable(event: React.FormEvent) {
     event.preventDefault();
     if (!employeeId || !date) return;
     setBusy(true); onError("");
     try {
-      const result = await request<Record<string, unknown>>("/api/availability-overrides", token, {
+      const result = await request<AvailabilityOverride>("/api/availability-overrides", token, {
         method: "POST",
         body: JSON.stringify({
           employee_id: Number(employeeId),
@@ -294,7 +321,7 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
           approval_status: "approved",
         }),
       });
-      setResponse(result);
+      setOverrides((current) => [result, ...current.filter((item) => item.id !== result.id)]);
       if (roster && rows.length) {
         const checked = await request<RosterValidation>("/api/rosters/validate", token, {
           method: "POST",
@@ -327,7 +354,15 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
         <button className="primary-button" disabled={busy}>{busy ? "Saving..." : "Mark unavailable"}</button>
       </form>
     </section>
-    {response && <section className="panel"><div className="panel-heading"><h3>Availability API response</h3></div><pre className="diagnostic-pre">{JSON.stringify(response, null, 2)}</pre></section>}
+    <section className="panel">
+      <div className="panel-heading">
+        <div><p className="eyebrow">Saved records</p><h3>Availability overrides <span className="count-badge">{overrides.length}</span></h3></div>
+        <button className="secondary-button" disabled={loadingOverrides} onClick={() => void loadOverrides()}>
+          <RefreshCw size={15} className={loadingOverrides ? "spin" : undefined} /> {loadingOverrides ? "Refreshing..." : "Refresh list"}
+        </button>
+      </div>
+      {loadingOverrides ? <div className="empty-state"><RefreshCw className="spin" /> Loading saved availability...</div> : overrides.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Status</th><th>Approval</th><th>Reason</th></tr></thead><tbody>{[...overrides].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).map((item) => <tr key={item.id}><td>{new Date(`${item.date}T00:00:00`).toLocaleDateString()}</td><td>{employees.find((employee) => employee.id === item.employee_id)?.name ?? `Employee #${item.employee_id}`}</td><td>{item.status}</td><td>{item.approval_status}</td><td>{item.reason}</td></tr>)}</tbody></table></div> : <div className="empty-state">No availability overrides have been saved yet.</div>}
+    </section>
     {validation && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">Roster validation</p><h3>{validation.is_valid ? "No validation errors" : "Coverage or validation issues found"}</h3></div><span className={`count-badge ${validation.error_count ? "text-red" : "text-green"}`}>{validation.error_count} errors</span></div><p className="muted">Solver result: {solverStatus || "saved roster validation"} · {validation.warning_count} warning(s); affected dates: {validation.affected_dates.join(", ") || "none"}.</p>{validation.diagnostics.slice(0, 20).map((item, index) => <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}><span>{item.code}</span><p>{item.message}</p><small>{item.target_date ?? "Roster-wide"}{item.employee_id ? ` · employee #${item.employee_id}` : ""}</small></div>)}</section>}
   </div>;
 }
