@@ -70,25 +70,46 @@ type RosterPreview = {
 type Roster = { id: number; year: number; month: number; current_version_id?: number | null; status: string };
 type RosterValidation = RosterPreview["validation"];
 
-async function request<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(init.headers ?? {}),
-    },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    const detail = typeof body.detail === "string" ? body.detail : body.detail?.message ?? body.detail?.code;
-    throw new Error(detail || `Request failed (${response.status})`);
+class APIError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
   }
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
 }
 
-function Login({ onLogin }: { onLogin: (token: string, email: string) => void }) {
+async function request<T>(path: string, token: string, init: RequestInit = {}): Promise<T> {
+  const retryable = (init.method ?? "GET").toUpperCase() === "GET" || path === "/api/rosters/generate";
+  const maxAttempts = retryable ? 3 : 1;
+  for (let attempt = 0; ; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(`${API_URL}${path}`, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(init.headers ?? {}),
+        },
+      });
+    } catch (reason) {
+      if (attempt + 1 >= maxAttempts) throw reason;
+      await new Promise((resolve) => window.setTimeout(resolve, 1200 * (attempt + 1)));
+      continue;
+    }
+    if (retryable && attempt + 1 < maxAttempts && [502, 503, 504].includes(response.status)) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1200 * (attempt + 1)));
+      continue;
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const detail = typeof body.detail === "string" ? body.detail : body.detail?.message ?? body.detail?.code;
+      throw new APIError(detail || `Request failed (${response.status})`, response.status);
+    }
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
+  }
+}
+
+function Login({ onLogin, sessionExpired }: { onLogin: (token: string, email: string) => void; sessionExpired: boolean }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -118,6 +139,7 @@ function Login({ onLogin }: { onLogin: (token: string, email: string) => void })
         <h1>Welcome back</h1>
         <p className="muted">Sign in to manage workforce coverage and monthly rosters.</p>
         <form onSubmit={submit} className="stack">
+          {sessionExpired && <div className="error-banner"><AlertTriangle size={16} />Your session expired. Sign in again to continue.</div>}
           <label>Email<input value={email} onChange={(e) => setEmail(e.target.value)} type="email" required placeholder="admin@example.com" /></label>
           <label>Password<input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required /></label>
           {error && <div className="error-banner"><AlertTriangle size={16} />{error}</div>}
@@ -132,11 +154,13 @@ function Login({ onLogin }: { onLogin: (token: string, email: string) => void })
 function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("smartroster_token") ?? "");
   const [email, setEmail] = useState(() => sessionStorage.getItem("smartroster_email") ?? "");
-  if (!token) return <Login onLogin={(next, nextEmail) => { sessionStorage.setItem("smartroster_token", next); sessionStorage.setItem("smartroster_email", nextEmail); setToken(next); setEmail(nextEmail); }} />;
-  return <Console token={token} email={email} onLogout={() => { sessionStorage.clear(); setToken(""); }} />;
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const clearSession = (expired = false) => { sessionStorage.clear(); setToken(""); setEmail(""); setSessionExpired(expired); };
+  if (!token) return <Login sessionExpired={sessionExpired} onLogin={(next, nextEmail) => { sessionStorage.setItem("smartroster_token", next); sessionStorage.setItem("smartroster_email", nextEmail); setSessionExpired(false); setToken(next); setEmail(nextEmail); }} />;
+  return <Console token={token} email={email} onLogout={() => clearSession()} onAuthExpired={() => clearSession(true)} />;
 }
 
-function Console({ token, email, onLogout }: { token: string; email: string; onLogout: () => void }) {
+function Console({ token, email, onLogout, onAuthExpired }: { token: string; email: string; onLogout: () => void; onAuthExpired: () => void }) {
   const [section, setSection] = useState("Overview");
   const [employees, setEmployees] = useState<Entity[]>([]);
   const [brands, setBrands] = useState<Entity[]>([]);
@@ -149,6 +173,16 @@ function Console({ token, email, onLogout }: { token: string; email: string; onL
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const showRequestError = (reason: unknown, fallback: string) => {
+    if (reason instanceof APIError && reason.status === 401) {
+      onAuthExpired();
+      return;
+    }
+    setError(reason instanceof Error ? reason.message : fallback);
+  };
 
   const load = async () => {
     setLoading(true); setError("");
@@ -164,7 +198,7 @@ function Console({ token, email, onLogout }: { token: string; email: string; onL
       const savedRosterId = Number(localStorage.getItem("smartroster_last_roster_id"));
       if (Number.isInteger(savedRosterId) && savedRosterId > 0) await loadRoster(savedRosterId);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load application data");
+      showRequestError(reason, "Unable to load application data");
     } finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, [token]);
@@ -178,24 +212,29 @@ function Console({ token, email, onLogout }: { token: string; email: string; onL
   ];
 
   async function generateRoster(year: number, month: number) {
+    if (generating) return;
+    setGenerating(true);
     setError(""); setNotice(""); setPreview(null);
     try {
       const result = await request<RosterPreview>("/api/rosters/generate", token, { method: "POST", body: JSON.stringify({ year, month }) });
       setPreview(result);
       setNotice(result.validation.is_valid ? `Roster generated: ${result.solver_status}` : "Roster generated with validation issues; it cannot be saved.");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Roster generation failed"); }
+    } catch (reason) { showRequestError(reason, "Roster generation failed"); }
+    finally { setGenerating(false); }
   }
   async function saveRoster() {
-    if (!preview || !preview.validation.is_valid) return;
+    if (saving || !preview || !preview.validation.is_valid) return;
+    setSaving(true);
     try {
       const saved = await request<Roster>("/api/rosters/save", token, { method: "POST", body: JSON.stringify({ year: preview.year, month: preview.month, solver_status: preview.solver_status, assignments: preview.assignments }) });
       localStorage.setItem("smartroster_last_roster_id", String(saved.id));
       setRoster(saved); setRosterRows(preview.assignments); setNotice(`Roster ${saved.id} saved successfully.`); setSection("Roster");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Roster save failed"); }
+    } catch (reason) { showRequestError(reason, "Roster save failed"); }
+    finally { setSaving(false); }
   }
   async function loadRoster(id: number) {
     try { setRoster(await request<Roster>(`/api/rosters/${id}`, token)); setRosterRows(await request<RosterAssignment[]>(`/api/rosters/${id}/assignments`, token)); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to retrieve roster"); }
+    catch (reason) { showRequestError(reason, "Unable to retrieve roster"); }
   }
 
   const content = section === "Overview"
@@ -207,7 +246,7 @@ function Console({ token, email, onLogout }: { token: string; email: string; onL
       : section === "Assignments"
         ? <Assignments employees={employees} brands={brands} processes={processes} assignments={assignments} token={token} onRefresh={load} name={name} />
         : section === "Roster"
-          ? <RosterPanel employees={employees} brands={brands} processes={processes} roster={roster} rows={rosterRows} preview={preview} onGenerate={generateRoster} onSave={saveRoster} onLoad={loadRoster} name={name} token={token} />
+          ? <RosterPanel employees={employees} brands={brands} processes={processes} roster={roster} rows={rosterRows} preview={preview} generating={generating} saving={saving} onGenerate={generateRoster} onSave={saveRoster} onLoad={loadRoster} name={name} token={token} />
           : <Directory title={section} items={section === "Brands" ? brands : section === "Processes" ? processes : pods} icon={section === "Brands" ? Network : section === "Processes" ? ClipboardList : Database} />;
 
   return (
@@ -218,7 +257,7 @@ function Console({ token, email, onLogout }: { token: string; email: string; onL
         <div className="side-footer"><div className="user-chip"><div className="avatar">{email.charAt(0).toUpperCase()}</div><div><strong>{email}</strong><span>Authenticated operator</span></div></div><button className="logout" onClick={onLogout}><LogOut size={16} /> Sign out</button></div>
       </aside>
       <main className="main-content">
-        <header className="topbar"><div><p className="eyebrow">Workspace / {section}</p><h1>{section === "Overview" ? "Operations overview" : section}</h1></div><button className="icon-button" onClick={() => void load()} title="Refresh data"><RefreshCw size={18} /></button></header>
+        <header className="topbar"><div><p className="eyebrow">Workspace / {section}</p><h1>{section === "Overview" ? "Operations overview" : section}</h1></div><button className="icon-button" disabled={loading || generating} onClick={() => void load()} title={generating ? "Roster is generating" : loading ? "Refreshing data" : "Refresh data"}><RefreshCw size={18} className={loading ? "spin" : undefined} /></button></header>
         {error && <div className="error-banner page-alert"><AlertTriangle size={17} />{error}<button onClick={() => setError("")}><X size={15} /></button></div>}
         {notice && <div className="success-banner page-alert"><CheckCircle2 size={17} />{notice}<button onClick={() => setNotice("")}><X size={15} /></button></div>}
         {loading ? <div className="empty-state"><RefreshCw className="spin" /> Loading workspace...</div> : content}
@@ -310,10 +349,10 @@ function Assignments({ employees, brands, processes, assignments, token, onRefre
   return <section className="panel"><div className="panel-heading"><div><p className="eyebrow">Eligibility</p><h3>Employee assignments <span className="count-badge">{assignments.length}</span></h3></div></div><form className="inline-form" onSubmit={add}><select required value={form.employee_id} onChange={(e) => setForm({ ...form, employee_id: e.target.value })}><option value="">Employee</option>{employees.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><select required value={form.brand_id} onChange={(e) => setForm({ ...form, brand_id: e.target.value })}><option value="">Brand</option>{brands.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><select required value={form.process_id} onChange={(e) => setForm({ ...form, process_id: e.target.value })}><option value="">Process</option>{processes.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><input required type="date" value={form.effective_start_date} onChange={(e) => setForm({ ...form, effective_start_date: e.target.value })} /><button className="primary-button"><Plus size={16} /> Assign</button></form>{error && <p className="field-error">{error}</p>}<div className="table-wrap"><table><thead><tr><th>Employee</th><th>Brand</th><th>Process</th><th>Effective from</th><th>Status</th></tr></thead><tbody>{assignments.map((item) => <tr key={item.id}><td>{name(employees, item.employee_id)}</td><td>{name(brands, item.brand_id)}</td><td>{name(processes, item.process_id)}</td><td>{item.effective_start_date}</td><td><span className="status-dot"><i />{item.is_active ? "Active" : "Inactive"}</span></td></tr>)}</tbody></table></div></section>;
 }
 
-function RosterPanel({ employees, brands, processes, roster, rows, preview, onGenerate, onSave, onLoad, name, token }: { employees: Entity[]; brands: Entity[]; processes: Entity[]; roster: Roster | null; rows: RosterAssignment[]; preview: RosterPreview | null; onGenerate: (year: number, month: number) => void; onSave: () => void; onLoad: (id: number) => void; name: (items: Entity[], id: number) => string; token: string }) {
+function RosterPanel({ employees, brands, processes, roster, rows, preview, generating, saving, onGenerate, onSave, onLoad, name, token }: { employees: Entity[]; brands: Entity[]; processes: Entity[]; roster: Roster | null; rows: RosterAssignment[]; preview: RosterPreview | null; generating: boolean; saving: boolean; onGenerate: (year: number, month: number) => void; onSave: () => void; onLoad: (id: number) => void; name: (items: Entity[], id: number) => string; token: string }) {
   const now = new Date(); const [year, setYear] = useState(now.getFullYear()); const [month, setMonth] = useState(now.getMonth() + 1);
   const shown = preview?.assignments ?? rows; const diagnostics = preview?.validation.diagnostics ?? [];
-  return <div className="content-stack"><section className="planner-head"><div><p className="eyebrow">Monthly planning</p><h2>Roster planner</h2><p className="muted">Generate, validate and save a solver-backed roster for the selected period.</p></div><div className="period-controls"><input type="number" min="2000" max="2100" value={year} onChange={(e) => setYear(Number(e.target.value))} /><select value={month} onChange={(e) => setMonth(Number(e.target.value))}>{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Date(2000, i, 1).toLocaleString("en", { month: "long" })}</option>)}</select><button className="primary-button" onClick={() => onGenerate(year, month)}><CalendarDays size={16} /> Generate</button>{preview?.validation.is_valid && <button className="secondary-button" onClick={onSave}>Save roster</button>}</div></section>{preview && <section className="stat-grid compact"><div className="stat-card"><span>Solver result</span><strong className="text-green">{preview.solver_status}</strong></div><div className="stat-card"><span>Assignments</span><strong>{preview.assignments.length}</strong></div><div className="stat-card"><span>Errors</span><strong className={preview.validation.error_count ? "text-red" : "text-green"}>{preview.validation.error_count}</strong></div><div className="stat-card"><span>Warnings</span><strong>{preview.validation.warning_count}</strong></div></section>}{preview && diagnostics.length > 0 && <section className="panel diagnostics"><div className="panel-heading"><h3><AlertTriangle size={18} /> Validation diagnostics</h3></div>{diagnostics.slice(0, 20).map((item, index) => <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}><span>{item.code}</span><p>{item.message}</p><small>{item.target_date ?? "Roster-wide"}{item.employee_id ? ` · employee #${item.employee_id}` : ""}</small></div>)}</section>}<section className="panel"><div className="panel-heading"><div><p className="eyebrow">Coverage view</p><h3>{roster ? `Saved roster #${roster.id}` : preview ? "Generated preview" : "No roster selected"}</h3></div>{roster && <button className="secondary-button" onClick={() => onLoad(roster.id)}>Reload saved roster</button>}</div>{shown.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Brand</th><th>Process</th><th>Workload</th></tr></thead><tbody>{shown.map((item, index) => <tr key={`${item.date}-${item.employee_id}-${item.brand_id}-${item.process_id}-${index}`}><td>{item.date}</td><td>{name(employees, item.employee_id)}</td><td>{name(brands, item.brand_id)}</td><td>{name(processes, item.process_id)}</td><td>{item.workload_units ?? "—"} units</td></tr>)}</tbody></table></div> : <div className="empty-state"><CalendarDays size={24} />Generate a roster to display monthly coverage.</div>}</section><ManualChange roster={roster} rows={rows} employees={employees} token={token} /></div>;
+  return <div className="content-stack"><section className="planner-head"><div><p className="eyebrow">Monthly planning</p><h2>Roster planner</h2><p className="muted">Generate, validate and save a solver-backed roster for the selected period.</p></div><div className="period-controls"><input type="number" min="2000" max="2100" value={year} onChange={(e) => setYear(Number(e.target.value))} /><select value={month} onChange={(e) => setMonth(Number(e.target.value))}>{Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{new Date(2000, i, 1).toLocaleString("en", { month: "long" })}</option>)}</select><button className="primary-button" disabled={generating} onClick={() => onGenerate(year, month)}><CalendarDays size={16} /> {generating ? "Generating..." : "Generate"}</button>{preview?.validation.is_valid && <button className="secondary-button" disabled={saving} onClick={onSave}>{saving ? "Saving..." : "Save roster"}</button>}</div></section>{preview && <section className="stat-grid compact"><div className="stat-card"><span>Solver result</span><strong className="text-green">{preview.solver_status}</strong></div><div className="stat-card"><span>Assignments</span><strong>{preview.assignments.length}</strong></div><div className="stat-card"><span>Errors</span><strong className={preview.validation.error_count ? "text-red" : "text-green"}>{preview.validation.error_count}</strong></div><div className="stat-card"><span>Warnings</span><strong>{preview.validation.warning_count}</strong></div></section>}{preview && diagnostics.length > 0 && <section className="panel diagnostics"><div className="panel-heading"><h3><AlertTriangle size={18} /> Validation diagnostics</h3></div>{diagnostics.slice(0, 20).map((item, index) => <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}><span>{item.code}</span><p>{item.message}</p><small>{item.target_date ?? "Roster-wide"}{item.employee_id ? ` · employee #${item.employee_id}` : ""}</small></div>)}</section>}<section className="panel"><div className="panel-heading"><div><p className="eyebrow">Coverage view</p><h3>{roster ? `Saved roster #${roster.id}` : preview ? "Generated preview" : "No roster selected"}</h3></div>{roster && <button className="secondary-button" onClick={() => onLoad(roster.id)}>Reload saved roster</button>}</div>{shown.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Brand</th><th>Process</th><th>Workload</th></tr></thead><tbody>{shown.map((item, index) => <tr key={`${item.date}-${item.employee_id}-${item.brand_id}-${item.process_id}-${index}`}><td>{item.date}</td><td>{name(employees, item.employee_id)}</td><td>{name(brands, item.brand_id)}</td><td>{name(processes, item.process_id)}</td><td>{item.workload_units ?? "—"} units</td></tr>)}</tbody></table></div> : <div className="empty-state"><CalendarDays size={24} />Generate a roster to display monthly coverage.</div>}</section><ManualChange roster={roster} rows={rows} employees={employees} token={token} /></div>;
 }
 
 function ManualChange({ roster, rows, employees, token }: { roster: Roster | null; rows: RosterAssignment[]; employees: Entity[]; token: string }) {
