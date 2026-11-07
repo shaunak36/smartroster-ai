@@ -18,6 +18,7 @@ from app.services.roster import (
     persist_roster,
     preview_manual_change,
     run_roster_pipeline,
+    valid_manual_replacement_employee_ids,
 )
 from app.services.scheduling import SchedulingAssignment, SchedulingStatus
 from app.services.validation import RosterValidationResult
@@ -177,12 +178,20 @@ def test_roster_api_preview_save_and_retrieve(api_client):
 
 def _persist_two_employee_roster(db_session):
     employee, brand, process = configured_employee(db_session)
+    organization = Organization(name="Manual roster organization", is_active=True)
+    db_session.add(organization)
+    db_session.flush()
+    employee.organization_id = organization.id
+    brand.organization_id = organization.id
+    process.organization_id = organization.id
+    db_session.flush()
     pipeline = run_roster_pipeline(db_session, 2026, 1)
     version = persist_roster(db_session, pipeline)
     second = Employee(
         employee_code="EMP-MANUAL-2",
         name="Manual Replacement",
         email="manual-2@example.com",
+        organization_id=organization.id,
         daily_capacity_units=8,
         weekly_capacity_units=40,
         monthly_capacity_units=160,
@@ -198,6 +207,42 @@ def _persist_two_employee_roster(db_session):
     ))
     db_session.commit()
     return version, employee, second, brand, process
+
+
+def test_valid_manual_replacements_only_returns_employees_passing_roster_rules(
+    db_session,
+):
+    version, employee, eligible, brand, process = _persist_two_employee_roster(
+        db_session
+    )
+    ineligible = Employee(
+        organization_id=version.roster.organization_id,
+        employee_code="EMP-MANUAL-INELIGIBLE",
+        name="Not Assigned",
+        email="not-assigned@example.com",
+    )
+    db_session.add(ineligible)
+    db_session.flush()
+    existing = version.assignments[0]
+    previous = SchedulingAssignment(
+        existing.employee_id,
+        existing.date,
+        existing.brand_id,
+        existing.process_id,
+        existing.workload_units,
+    )
+
+    candidate_ids = valid_manual_replacement_employee_ids(
+        db_session,
+        version.roster_id,
+        version.id,
+        previous,
+        version.roster.organization_id,
+    )
+
+    assert eligible.id in candidate_ids
+    assert employee.id not in candidate_ids
+    assert ineligible.id not in candidate_ids
 
 
 def test_manual_preview_does_not_mutate_saved_version(db_session):
