@@ -79,3 +79,6 @@ label { display: grid; gap: 7px; color: #4a5870; font-size: 12px; font-weight: 7
 .manual-diagnostics { margin-top: 12px; padding: 12px; border-radius: 8px; background: #fff7ed; }
 .manual-diagnostics > strong { display: block; margin-bottom: 6px; color: #9a3412; font-size: 13px; }
 .manual-diagnostics .diagnostic { grid-template-columns: minmax(150px, 220px) 1fr 150px; }
+.list-filters { margin-top: 16px; margin-bottom: 8px; }
+.list-filters input[type="search"] { min-width: 220px; }
+.list-count { margin: 0 0 8px; font-size: 11px; }

@@ -308,6 +308,10 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
   const [loadingOverrides, setLoadingOverrides] = useState(true);
   const [overridesError, setOverridesError] = useState("");
   const overridesRequestId = useRef(0);
+  const [overrideSearch, setOverrideSearch] = useState("");
+  const [overrideEmployeeId, setOverrideEmployeeId] = useState("");
+  const [overrideStatus, setOverrideStatus] = useState("");
+  const [overrideDate, setOverrideDate] = useState("");
   const [validation, setValidation] = useState<RosterValidation | null>(null);
   const [solverStatus, setSolverStatus] = useState("");
   const [busy, setBusy] = useState(false);
@@ -335,6 +339,22 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
   }
 
   useEffect(() => { void loadOverrides(); }, [token]);
+
+  const visibleOverrides = [...overrides]
+    .sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id)
+    .filter((item) => {
+      const employee = employees.find((candidate) => candidate.id === item.employee_id);
+      const search = overrideSearch.trim().toLowerCase();
+      const matchesSearch = !search || [
+        employee?.name,
+        employee?.employee_code,
+        item.reason,
+      ].some((value) => value?.toLowerCase().includes(search));
+      return matchesSearch
+        && (!overrideEmployeeId || item.employee_id === Number(overrideEmployeeId))
+        && (!overrideStatus || item.status === overrideStatus)
+        && (!overrideDate || item.date === overrideDate);
+    });
 
   async function markUnavailable(event: React.FormEvent) {
     event.preventDefault();
@@ -394,7 +414,17 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
           <RefreshCw size={15} className={loadingOverrides ? "spin" : undefined} /> {loadingOverrides ? "Refreshing..." : "Refresh list"}
         </button>
       </div>
-      {loadingOverrides ? <div className="empty-state"><RefreshCw className="spin" /> Loading saved availability...</div> : overridesError ? <div className="empty-state"><span className="field-error">{overridesError}</span><button className="secondary-button" onClick={() => void loadOverrides()}>Try again</button></div> : overrides.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Status</th><th>Approval</th><th>Reason</th></tr></thead><tbody>{[...overrides].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).map((item) => <tr key={item.id}><td>{new Date(`${item.date}T00:00:00`).toLocaleDateString()}</td><td>{employees.find((employee) => employee.id === item.employee_id)?.name ?? `Employee #${item.employee_id}`}</td><td>{item.status}</td><td>{item.approval_status}</td><td>{item.reason}</td></tr>)}</tbody></table></div> : <div className="empty-state">No availability overrides have been saved yet.</div>}
+      {loadingOverrides ? <div className="empty-state"><RefreshCw className="spin" /> Loading saved availability...</div> : overridesError ? <div className="empty-state"><span className="field-error">{overridesError}</span><button className="secondary-button" onClick={() => void loadOverrides()}>Try again</button></div> : overrides.length ? <>
+        <div className="inline-form list-filters">
+          <input type="search" placeholder="Search employee or reason" value={overrideSearch} onChange={(event) => setOverrideSearch(event.target.value)} />
+          <select value={overrideEmployeeId} onChange={(event) => setOverrideEmployeeId(event.target.value)}><option value="">All employees</option>{employees.map((employee) => <option value={employee.id} key={employee.id}>{employee.name}</option>)}</select>
+          <select value={overrideStatus} onChange={(event) => setOverrideStatus(event.target.value)}><option value="">All statuses</option><option value="unavailable">Unavailable</option><option value="available">Available</option></select>
+          <input aria-label="Filter by date" type="date" value={overrideDate} onChange={(event) => setOverrideDate(event.target.value)} />
+          {(overrideSearch || overrideEmployeeId || overrideStatus || overrideDate) && <button className="secondary-button" onClick={() => { setOverrideSearch(""); setOverrideEmployeeId(""); setOverrideStatus(""); setOverrideDate(""); }}>Clear filters</button>}
+        </div>
+        <p className="muted list-count">Showing {visibleOverrides.length} of {overrides.length} saved records</p>
+        {visibleOverrides.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Status</th><th>Approval</th><th>Reason</th></tr></thead><tbody>{visibleOverrides.map((item) => <tr key={item.id}><td>{new Date(`${item.date}T00:00:00`).toLocaleDateString()}</td><td>{employees.find((employee) => employee.id === item.employee_id)?.name ?? `Employee #${item.employee_id}`}</td><td>{item.status}</td><td>{item.approval_status}</td><td>{item.reason}</td></tr>)}</tbody></table></div> : <div className="empty-state">No saved records match these filters.</div>}
+      </> : <div className="empty-state">No availability overrides have been saved yet.</div>}
     </section>
     {validation && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">Roster validation</p><h3>{validation.is_valid ? "No validation errors" : "Coverage or validation issues found"}</h3></div><span className={`count-badge ${validation.error_count ? "text-red" : "text-green"}`}>{validation.error_count} errors</span></div><p className="muted">Solver result: {solverStatus || "saved roster validation"} · {validation.warning_count} warning(s); affected dates: {validation.affected_dates.join(", ") || "none"}.</p>{validation.diagnostics.slice(0, 20).map((item, index) => <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}><span>{item.code}</span><p>{item.message}</p><small>{item.target_date ?? "Roster-wide"}{item.employee_id ? ` · employee #${item.employee_id}` : ""}</small></div>)}</section>}
   </div>;
@@ -407,8 +437,17 @@ function Directory({ title, items, icon: Icon }: { title: string; items: Entity[
 function People({ employees, pods, token, onRefresh, name }: { employees: Entity[]; pods: Entity[]; token: string; onRefresh: () => void; name: (items: Entity[], id: number) => string }) {
   const [form, setForm] = useState({ employee_code: "", name: "", email: "", pod_id: "" });
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [search, setSearch] = useState(""); const [podFilter, setPodFilter] = useState(""); const [statusFilter, setStatusFilter] = useState("");
   async function addEmployee(event: React.FormEvent) { event.preventDefault(); setBusy(true); setError(""); try { await request("/api/employees", token, { method: "POST", body: JSON.stringify({ ...form, pod_id: form.pod_id ? Number(form.pod_id) : null }) }); setForm({ employee_code: "", name: "", email: "", pod_id: "" }); onRefresh(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to add employee"); } finally { setBusy(false); } }
-  return <div className="content-stack"><section className="panel"><div className="panel-heading"><div><p className="eyebrow">Workforce</p><h3>Employees <span className="count-badge">{employees.length}</span></h3></div></div><form className="inline-form" onSubmit={addEmployee}><input required placeholder="Employee ID" value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} /><input required placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /><input required type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /><select value={form.pod_id} onChange={(e) => setForm({ ...form, pod_id: e.target.value })}><option value="">No pod</option>{pods.map((pod) => <option key={pod.id} value={pod.id}>{pod.name}</option>)}</select><button className="primary-button" disabled={busy}><Plus size={16} /> Add</button></form>{error && <p className="field-error">{error}</p>}<div className="table-wrap"><table><thead><tr><th>Employee</th><th>Contact</th><th>Pod</th><th>Status</th></tr></thead><tbody>{employees.map((employee) => <tr key={employee.id}><td><div className="person-cell"><div className="avatar">{employee.name.charAt(0)}</div><div><strong>{employee.name}</strong><small>{employee.employee_code}</small></div></div></td><td>{employee.email}</td><td>{employee.pod_id ? name(pods, employee.pod_id) : "Unassigned"}</td><td><span className="status-dot"><i />{employee.status ?? "active"}</span></td></tr>)}</tbody></table>{!employees.length && <div className="empty-state">No employees yet. Add your first operator above.</div>}</div></section></div>;
+  const visibleEmployees = employees.filter((employee) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || [employee.name, employee.employee_code, employee.email]
+      .some((value) => value?.toLowerCase().includes(query));
+    return matchesSearch
+      && (!podFilter || employee.pod_id === Number(podFilter))
+      && (!statusFilter || (employee.status ?? "active") === statusFilter);
+  });
+  return <div className="content-stack"><section className="panel"><div className="panel-heading"><div><p className="eyebrow">Workforce</p><h3>Employees <span className="count-badge">{employees.length}</span></h3></div></div><form className="inline-form" onSubmit={addEmployee}><input required placeholder="Employee ID" value={form.employee_code} onChange={(e) => setForm({ ...form, employee_code: e.target.value })} /><input required placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /><input required type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /><select value={form.pod_id} onChange={(e) => setForm({ ...form, pod_id: e.target.value })}><option value="">No pod</option>{pods.map((pod) => <option key={pod.id} value={pod.id}>{pod.name}</option>)}</select><button className="primary-button" disabled={busy}><Plus size={16} /> Add</button></form>{error && <p className="field-error">{error}</p>}<div className="inline-form list-filters"><input type="search" placeholder="Search name, ID or email" value={search} onChange={(e) => setSearch(e.target.value)} /><select aria-label="Filter by pod" value={podFilter} onChange={(e) => setPodFilter(e.target.value)}><option value="">All pods</option>{pods.map((pod) => <option key={pod.id} value={pod.id}>{pod.name}</option>)}</select><select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="">All statuses</option><option value="active">Active</option><option value="inactive">Inactive</option></select>{(search || podFilter || statusFilter) && <button className="secondary-button" onClick={() => { setSearch(""); setPodFilter(""); setStatusFilter(""); }}>Clear filters</button>}</div><p className="muted list-count">Showing {visibleEmployees.length} of {employees.length} employees</p><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Contact</th><th>Pod</th><th>Status</th></tr></thead><tbody>{visibleEmployees.map((employee) => <tr key={employee.id}><td><div className="person-cell"><div className="avatar">{employee.name.charAt(0)}</div><div><strong>{employee.name}</strong><small>{employee.employee_code}</small></div></div></td><td>{employee.email}</td><td>{employee.pod_id ? name(pods, employee.pod_id) : "Unassigned"}</td><td><span className="status-dot"><i />{employee.status ?? "active"}</span></td></tr>)}</tbody></table>{!employees.length ? <div className="empty-state">No employees yet. Add your first operator above.</div> : !visibleEmployees.length && <div className="empty-state">No employees match these filters.</div>}</div></section></div>;
 }
 
 function Assignments({ employees, brands, processes, assignments, token, onRefresh, name }: { employees: Entity[]; brands: Entity[]; processes: Entity[]; assignments: Assignment[]; token: string; onRefresh: () => void; name: (items: Entity[], id: number) => string }) {
