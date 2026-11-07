@@ -1,17 +1,27 @@
 # SmartRoster AI
 
-SmartRoster AI is a workforce roster management system for multi-brand D2C
-operations. The application uses a React/TypeScript frontend, a FastAPI
-backend, SQLAlchemy persistence, SQLite for local development, PostgreSQL for
-the hosted database, and Google OR-Tools CP-SAT for constraint-based scheduling.
+SmartRoster AI is a workforce scheduling app for teams that support several
+brands. I built it to help organize employees, track when they are available,
+and plan who can cover different kinds of work. It has a React frontend and a
+FastAPI backend. It uses SQLite on my computer, PostgreSQL for the hosted
+database, and Google OR-Tools to help create schedules.
 
 ## Status
 
-Implemented: employee, brand, process and pod management; assignments;
-availability and leave; CP-SAT roster generation; coverage validation and
-conflict detection; and a React frontend. The application is deployed publicly.
-The FastAPI backend runs on Render with PostgreSQL configured through Supabase;
-the frontend is deployed separately from the backend service.
+The app is live, and I can use it to manage employees, brands, processes, pods,
+work assignments, and availability. It can generate and check monthly rosters,
+and I can preview manual changes before accepting them. The backend runs on
+Render and uses a PostgreSQL database set up through Supabase. The website
+frontend is deployed separately from the backend.
+
+## Live demo
+
+- Website: [smartroster-ai.onrender.com](https://smartroster-ai.onrender.com)
+- API health: [smartroster-api.onrender.com/health](https://smartroster-api.onrender.com/health)
+- API documentation: [smartroster-api.onrender.com/docs](https://smartroster-api.onrender.com/docs)
+
+The API docs are for development and inspection. Do not use them to share
+account credentials or change live data during a demo.
 
 ## Quick start
 
@@ -24,7 +34,7 @@ the frontend is deployed separately from the backend service.
    ```json
    {
      "email": "admin@demo.local",
-     "password": "Admin@123456",
+     "password": "<choose a local password of at least 12 characters>",
      "full_name": "Admin",
      "organization_name": "SmartRoster Demo",
      "bootstrap_token": "<the token you set in .env>"
@@ -32,7 +42,7 @@ the frontend is deployed separately from the backend service.
    ```
    The password must be at least 12 characters.
 4. Frontend: follow "Frontend setup" below, open http://localhost:5173 and log
-   in with `admin@demo.local` / `Admin@123456`.
+   in with `admin@demo.local` and the password you created above.
 
 ## Architecture
 
@@ -167,23 +177,30 @@ constants.
 
 ## Using the roster planner
 
-1. Open **Roster**, choose a year and month, and select **Generate**. Generation
-   can take a little while; keep the page open. The button and status message
-   indicate that the request is still running.
-2. Review the generated preview. A roster with zero errors can be saved;
-   warnings are informational and do not by themselves prevent saving. For
-   example, a supporting-date warning means nearby dates outside the selected
-   month were included to check weekly workload across the month boundary.
-3. Select **Save roster** to persist the preview. Generating alone does not
-   create a saved roster.
-4. Use **Manual roster change** to select a saved assignment and a replacement
-   employee, then choose **Preview change**. The backend checks the proposed
-   change against the roster rules. If it fails, review the displayed reason
-   and try a replacement that is available, eligible, and within workload
-   limits. Select **Accept change** only when you intend to save the change; it
-   creates a new roster version and keeps the previous version for audit.
-5. Review the coverage list in its own scroll area. Validation details can be
-   opened when you need to inspect individual warnings or errors.
+When I first use the planner, I choose a year and month on the **Roster** page
+and click **Generate**. It can take a little while, so I leave the page open
+while it works. The button and message let me know it is still generating.
+
+When the preview appears, I look at the assignment count and the validation
+results. Errors need to be fixed before I can save the roster. Warnings are
+usually notes and do not stop me from saving. For example, a supporting-date
+warning means the planner checked a nearby date outside the month so it could
+work out weekly workload correctly.
+
+If there are no errors, I click **Save roster**. This step matters because
+**Generate** only creates a preview; it does not save the roster yet.
+
+After saving, I can go to **Manual roster change**, choose an assignment, and
+pick a replacement employee. I click **Preview change** to see whether it
+follows the roster rules. If it does not, the page tells me why, so I can try
+someone who is available, trained for that work, and has enough capacity. If
+the change looks right, I click **Accept change**. That saves a new version
+while keeping the earlier one in the roster history.
+
+The coverage list has its own scroll area, so I can look through the schedule
+without scrolling past every assignment to reach the other controls. I can
+open the validation details whenever I want to read the individual warnings or
+errors.
 
 ## Troubleshooting
 
@@ -316,6 +333,6 @@ employees, backup employees, and the blocking reasons.
    PostgreSQL, run solves as background jobs, split solves per pod or brand
    group to keep the models small, and add pagination and caching to the views.
 
-8. **One more week.** Deploy the app publicly, record the demo walkthrough,
-   add backup-resource recommendations, and automate roster regeneration after
-   approved leave or availability changes.
+8. **With another week.** Record the demo walkthrough, add backup-resource
+   recommendations, and automate roster regeneration after approved leave or
+   availability changes.
