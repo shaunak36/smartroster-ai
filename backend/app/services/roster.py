@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import (
     AssignmentSource,
     Employee,
+    EmployeeStatus,
     Roster,
     RosterAssignment,
     RosterVersion,
@@ -142,6 +143,59 @@ def preview_manual_change(
         session, version.roster.year, version.roster.month, assignments
     )
     return version, pipeline
+
+
+def valid_manual_replacement_employee_ids(
+    session: Session,
+    roster_id: int,
+    expected_version_id: int,
+    previous_assignment: SchedulingAssignment,
+    organization_id: int,
+) -> tuple[int, ...]:
+    version = _current_version(session, roster_id)
+    if version.id != expected_version_id:
+        raise RosterConcurrencyError("Roster version is newer than expected")
+    if version.roster.organization_id != organization_id:
+        raise RosterPersistenceError("Roster was not found")
+
+    current = _rows_from_version(version)
+    if not any(
+        _assignment_key(item) == _assignment_key(previous_assignment)
+        for item in current
+    ):
+        raise ManualRosterChangeError("The assignment to replace was not found")
+
+    start, end = period_dates(version.roster.year, version.roster.month)
+    snapshot = ConfigurationResolver(session).resolve(start, end)
+    employee_ids = session.scalars(
+        select(Employee.id).where(
+            Employee.organization_id == organization_id,
+            Employee.status == EmployeeStatus.ACTIVE,
+            Employee.id.in_(snapshot.employees),
+        )
+    ).all()
+    valid_ids = []
+    for employee_id in employee_ids:
+        if employee_id == previous_assignment.employee_id:
+            continue
+        replacement = SchedulingAssignment(
+            employee_id=employee_id,
+            target_date=previous_assignment.target_date,
+            brand_id=previous_assignment.brand_id,
+            process_id=previous_assignment.process_id,
+            workload_units=previous_assignment.workload_units,
+        )
+        proposed = apply_manual_change(
+            current,
+            ManualChange(
+                operation="replace",
+                assignment=replacement,
+                previous_assignment=previous_assignment,
+            ),
+        )
+        if validate_roster(snapshot, proposed).is_valid:
+            valid_ids.append(employee_id)
+    return tuple(sorted(valid_ids))
 
 
 def accept_manual_change(

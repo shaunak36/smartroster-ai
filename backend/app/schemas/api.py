@@ -440,6 +440,11 @@ class ManualRosterRequest(ManualRosterChange):
     changed_by: str = Field(min_length=1, max_length=160)
 
 
+class ManualReplacementCandidatesRequest(APIModel):
+    expected_version_id: int
+    previous_assignment: RosterAssignmentPayload
+
+
 class ManualRosterPreviewResponse(APIModel):
     roster_id: int
     source_version_id: int

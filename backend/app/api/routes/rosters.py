@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models import Roster, RosterAssignment, SolverStatus
 from app.schemas.api import (
+    ManualReplacementCandidatesRequest,
     ManualRosterPreviewResponse,
     ManualRosterRequest,
     RosterAssignmentPayload,
@@ -33,10 +34,15 @@ from app.services.roster import (
     preview_manual_change,
     run_roster_pipeline,
     roster_versions,
+    valid_manual_replacement_employee_ids,
 )
 from app.services.configuration import ConfigurationResolutionError
 from app.services.scheduling import SchedulingAssignment
-from app.services.auth import get_current_user
+from app.services.auth import (
+    OrganizationContext,
+    get_current_user,
+    get_organization_context,
+)
 
 router = APIRouter(
     prefix="/api/rosters",
@@ -266,6 +272,38 @@ def preview_manual_roster(
     ) as exc:
         raise _manual_error(exc) from exc
     return _manual_preview_response(roster_id, version.id, pipeline)
+
+
+@router.post("/{roster_id}/manual/replacements")
+def manual_replacement_candidates(
+    roster_id: int,
+    payload: ManualReplacementCandidatesRequest,
+    db: Session = Depends(get_db),
+    context: OrganizationContext = Depends(get_organization_context),
+):
+    assignment = payload.previous_assignment
+    previous_assignment = SchedulingAssignment(
+        assignment.employee_id,
+        assignment.date,
+        assignment.brand_id,
+        assignment.process_id,
+        assignment.workload_units or 0,
+    )
+    try:
+        employee_ids = valid_manual_replacement_employee_ids(
+            db,
+            roster_id,
+            payload.expected_version_id,
+            previous_assignment,
+            context.organization_id,
+        )
+    except (
+        ConfigurationResolutionError,
+        RosterPersistenceError,
+        ManualRosterChangeError,
+    ) as exc:
+        raise _manual_error(exc) from exc
+    return {"employee_ids": employee_ids}
 
 
 @router.post("/{roster_id}/manual/accept", response_model=RosterVersionRead)

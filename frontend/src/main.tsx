@@ -412,13 +412,157 @@ function RosterPanel({ employees, brands, processes, roster, rows, preview, gene
 }
 
 function ManualChange({ roster, rows, employees, token }: { roster: Roster | null; rows: RosterAssignment[]; employees: Entity[]; token: string }) {
-  const [selected, setSelected] = useState(""); const [replacement, setReplacement] = useState(""); const [changePreview, setChangePreview] = useState<{ validation: { is_valid: boolean; error_count: number; diagnostics: Diagnostic[] } } | null>(null); const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false);
-  const assignment = rows[Number(selected)]; const canChange = Boolean(roster?.current_version_id && assignment && replacement);
-  const payload = canChange ? { operation: "replace", expected_version_id: roster?.current_version_id, changed_by: "authenticated operator", assignment: { ...assignment, employee_id: Number(replacement) }, previous_assignment: assignment } : null;
-  async function previewChange() { if (!payload || !roster) return; setBusy(true); setMessage(""); try { const result = await request<{ validation: { is_valid: boolean; error_count: number; diagnostics: Diagnostic[] } }>(`/api/rosters/${roster.id}/manual/preview`, token, { method: "POST", body: JSON.stringify(payload) }); setChangePreview(result); setMessage(result.validation.is_valid ? "Manual change passed independent validation. Accept to create a new roster version." : "This replacement does not meet the roster rules. Review the reason below."); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Manual preview failed"); } finally { setBusy(false); } }
-  async function acceptChange() { if (!payload || !roster || !changePreview?.validation.is_valid) return; setBusy(true); try { await request(`/api/rosters/${roster.id}/manual/accept`, token, { method: "POST", body: JSON.stringify(payload) }); setMessage("Manual change accepted as a new roster version. Reload the roster to view it."); setChangePreview(null); } catch (reason) { setMessage(reason instanceof Error ? reason.message : "Manual change acceptance failed"); } finally { setBusy(false); } }
-  const manualHelp = roster?.current_version_id && rows.length ? "Manual changes are independently validated by the backend before acceptance. Select a saved assignment to prepare a replacement." : "Generate and save a valid roster first. After saving, its assignments will appear in this list.";
-  return <section className="panel"><div className="panel-heading"><div><p className="eyebrow">Controlled change</p><h3>Manual roster change</h3></div><ShieldCheck className="muted-icon" /></div><p className="muted">{manualHelp}</p><div className="inline-form"><select value={selected} disabled={!rows.length} onChange={(e) => setSelected(e.target.value)}><option value="">{rows.length ? "Select saved assignment" : "No saved assignments yet"}</option>{rows.map((item, index) => <option value={index} key={`${item.date}-${item.employee_id}-${index}`}>{item.date} · employee #{item.employee_id}</option>)}</select><select value={replacement} disabled={!rows.length} onChange={(e) => setReplacement(e.target.value)}><option value="">Replacement employee</option>{employees.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><button className="secondary-button" disabled={!canChange || busy} onClick={() => void previewChange()}>Preview change</button>{changePreview?.validation.is_valid && <button className="primary-button" disabled={busy} onClick={() => void acceptChange()}>Accept change</button>}</div>{message && <p className="field-note">{message}</p>}{changePreview && !changePreview.validation.is_valid && changePreview.validation.diagnostics.length > 0 && <div className="manual-diagnostics" role="alert"><strong>Why this replacement was rejected</strong>{changePreview.validation.diagnostics.slice(0, 8).map((item, index) => { const copy = diagnosticCopy[item.code] ?? { title: item.code.replaceAll("_", " "), message: item.message }; return <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}><span>{copy.title}</span><p>{copy.message}</p><small>{item.target_date ? new Date(`${item.target_date}T00:00:00`).toLocaleDateString() : ""}{item.employee_id ? ` - ${employees.find((employee) => employee.id === item.employee_id)?.name ?? "Employee"}` : ""}</small></div>; })}</div>}</section>;
+  const [selected, setSelected] = useState("");
+  const [replacement, setReplacement] = useState("");
+  const [candidateIds, setCandidateIds] = useState<number[] | null>(null);
+  const [changePreview, setChangePreview] = useState<{ validation: { is_valid: boolean; error_count: number; diagnostics: Diagnostic[] } } | null>(null);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [findingCandidates, setFindingCandidates] = useState(false);
+  const assignment = rows[Number(selected)];
+  const candidateEmployees = candidateIds === null
+    ? []
+    : employees.filter((item) => candidateIds.includes(item.id));
+  const canChange = Boolean(
+    roster?.current_version_id &&
+    assignment &&
+    candidateIds?.includes(Number(replacement)),
+  );
+  const payload = canChange ? {
+    operation: "replace",
+    expected_version_id: roster?.current_version_id,
+    changed_by: "authenticated operator",
+    assignment: { ...assignment, employee_id: Number(replacement) },
+    previous_assignment: assignment,
+  } : null;
+
+  function selectAssignment(value: string) {
+    setSelected(value);
+    setReplacement("");
+    setCandidateIds(null);
+    setChangePreview(null);
+    setMessage("");
+  }
+
+  async function findCandidates() {
+    if (!assignment || !roster?.current_version_id || findingCandidates) return;
+    setFindingCandidates(true);
+    setCandidateIds(null);
+    setReplacement("");
+    setChangePreview(null);
+    setMessage("");
+    try {
+      const result = await request<{ employee_ids: number[] }>(
+        `/api/rosters/${roster.id}/manual/replacements`,
+        token,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            expected_version_id: roster.current_version_id,
+            previous_assignment: assignment,
+          }),
+        },
+      );
+      setCandidateIds(result.employee_ids);
+      if (!result.employee_ids.length) {
+        setMessage("No replacement employees pass the roster checks for this assignment. Try a different assignment or update the team setup.");
+      }
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to check replacement employees");
+    } finally {
+      setFindingCandidates(false);
+    }
+  }
+
+  async function previewChange() {
+    if (!payload || !roster) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const result = await request<{ validation: { is_valid: boolean; error_count: number; diagnostics: Diagnostic[] } }>(
+        `/api/rosters/${roster.id}/manual/preview`,
+        token,
+        { method: "POST", body: JSON.stringify(payload) },
+      );
+      setChangePreview(result);
+      setMessage(result.validation.is_valid
+        ? "This replacement passes validation. Accept to save it as a new roster version."
+        : "This replacement does not meet the roster rules. Review the reason below.");
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Manual preview failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptChange() {
+    if (!payload || !roster || !changePreview?.validation.is_valid) return;
+    setBusy(true);
+    try {
+      await request(
+        `/api/rosters/${roster.id}/manual/accept`,
+        token,
+        { method: "POST", body: JSON.stringify(payload) },
+      );
+      setMessage("Manual change accepted as a new roster version. Reload the roster to view it.");
+      setChangePreview(null);
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Manual change acceptance failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const manualHelp = roster?.current_version_id && rows.length
+    ? "Select an assignment, then check which employees can safely replace the current person."
+    : "Generate and save a valid roster first. Its assignments will appear here.";
+  const diagnosis = (item: Diagnostic) => diagnosticCopy[item.code] ?? {
+    title: item.code.replaceAll("_", " "),
+    message: item.message,
+  };
+
+  return <section className="panel">
+    <div className="panel-heading">
+      <div><p className="eyebrow">Controlled change</p><h3>Manual roster change</h3></div>
+      <ShieldCheck className="muted-icon" />
+    </div>
+    <p className="muted">{manualHelp}</p>
+    <div className="inline-form">
+      <select value={selected} disabled={!rows.length || busy || findingCandidates} onChange={(event) => selectAssignment(event.target.value)}>
+        <option value="">{rows.length ? "Select saved assignment" : "No saved assignments yet"}</option>
+        {rows.map((item, index) => <option value={index} key={`${item.date}-${item.employee_id}-${index}`}>
+          {`${item.date} - ${employees.find((employee) => employee.id === item.employee_id)?.name ?? `Employee #${item.employee_id}`}`}
+        </option>)}
+      </select>
+      <button className="secondary-button" disabled={!assignment || busy || findingCandidates} onClick={() => void findCandidates()}>
+        {findingCandidates ? "Checking employees..." : "Find valid replacements"}
+      </button>
+      <select value={replacement} disabled={!candidateIds?.length || busy || findingCandidates} onChange={(event) => { setReplacement(event.target.value); setChangePreview(null); setMessage(""); }}>
+        <option value="">{candidateIds === null ? "Check assignment first" : candidateIds.length ? "Choose a valid replacement" : "No valid replacements"}</option>
+        {candidateEmployees.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+      </select>
+      <button className="secondary-button" disabled={!canChange || busy || findingCandidates} onClick={() => void previewChange()}>
+        {busy && !changePreview ? "Checking..." : "Preview change"}
+      </button>
+      {changePreview?.validation.is_valid && <button className="primary-button" disabled={busy} onClick={() => void acceptChange()}>
+        {busy ? "Saving..." : "Accept change"}
+      </button>}
+    </div>
+    {candidateIds && candidateIds.length > 0 && <p className="field-note">{candidateIds.length} employee{candidateIds.length === 1 ? "" : "s"} pass the roster checks for this assignment.</p>}
+    {message && <p className="field-note">{message}</p>}
+    {changePreview && !changePreview.validation.is_valid && changePreview.validation.diagnostics.length > 0 && <div className="manual-diagnostics" role="alert">
+      <strong>Why this replacement was rejected</strong>
+      {changePreview.validation.diagnostics.slice(0, 8).map((item, index) => {
+        const copy = diagnosis(item);
+        return <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}>
+          <span>{copy.title}</span><p>{copy.message}</p>
+          <small>{item.target_date ? new Date(`${item.target_date}T00:00:00`).toLocaleDateString() : ""}
+            {item.employee_id ? ` - ${employees.find((employee) => employee.id === item.employee_id)?.name ?? "Employee"}` : ""}
+          </small>
+        </div>;
+      })}
+    </div>}
+  </section>;
 }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);
