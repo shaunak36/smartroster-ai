@@ -253,6 +253,27 @@ def test_approved_availability_override_is_blocked_by_approved_leave(api_client)
     assert "Approved leave" in resolved.json()["reason"]
 
 
+def test_availability_override_list_returns_saved_records(api_client):
+    employee_id = api_client.post("/api/employees", json=employee_payload("EMP-OVERRIDE-LIST")).json()["id"]
+    created = api_client.post(
+        "/api/availability-overrides",
+        json={
+            "employee_id": employee_id,
+            "date": "2026-11-18",
+            "status": "unavailable",
+            "reason": "Testing availability list",
+            "approval_status": "approved",
+        },
+    )
+    assert created.status_code == 201
+
+    response = api_client.get("/api/availability-overrides?limit=200")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["id"] == created.json()["id"]
+
+
 def test_capacity_and_calendar_validation(api_client):
     employee = api_client.post("/api/employees", json=employee_payload("EMP-CAP"))
     assert employee.status_code == 201

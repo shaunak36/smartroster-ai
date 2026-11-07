@@ -306,12 +306,14 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
   const [reason, setReason] = useState("Unavailable for assessment demonstration");
   const [overrides, setOverrides] = useState<AvailabilityOverride[]>([]);
   const [loadingOverrides, setLoadingOverrides] = useState(true);
+  const [overridesError, setOverridesError] = useState("");
   const [validation, setValidation] = useState<RosterValidation | null>(null);
   const [solverStatus, setSolverStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function loadOverrides() {
     setLoadingOverrides(true);
+    setOverridesError("");
     try {
       const result = await request<{ items: AvailabilityOverride[] }>(
         "/api/availability-overrides?limit=200",
@@ -319,7 +321,10 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
       );
       setOverrides(result.items);
     } catch (reasonValue) {
-      onError(reasonValue instanceof Error ? reasonValue.message : "Unable to load saved availability");
+      const message = reasonValue instanceof Error ? reasonValue.message : "Unable to load saved availability";
+      setOverridesError(message === "Failed to fetch"
+        ? "Could not reach the server to load saved availability. Check your connection and try again."
+        : message);
     } finally {
       setLoadingOverrides(false);
     }
@@ -382,7 +387,7 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
           <RefreshCw size={15} className={loadingOverrides ? "spin" : undefined} /> {loadingOverrides ? "Refreshing..." : "Refresh list"}
         </button>
       </div>
-      {loadingOverrides ? <div className="empty-state"><RefreshCw className="spin" /> Loading saved availability...</div> : overrides.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Status</th><th>Approval</th><th>Reason</th></tr></thead><tbody>{[...overrides].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).map((item) => <tr key={item.id}><td>{new Date(`${item.date}T00:00:00`).toLocaleDateString()}</td><td>{employees.find((employee) => employee.id === item.employee_id)?.name ?? `Employee #${item.employee_id}`}</td><td>{item.status}</td><td>{item.approval_status}</td><td>{item.reason}</td></tr>)}</tbody></table></div> : <div className="empty-state">No availability overrides have been saved yet.</div>}
+      {loadingOverrides ? <div className="empty-state"><RefreshCw className="spin" /> Loading saved availability...</div> : overridesError ? <div className="empty-state"><span className="field-error">{overridesError}</span><button className="secondary-button" onClick={() => void loadOverrides()}>Try again</button></div> : overrides.length ? <div className="table-wrap"><table><thead><tr><th>Date</th><th>Employee</th><th>Status</th><th>Approval</th><th>Reason</th></tr></thead><tbody>{[...overrides].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id).map((item) => <tr key={item.id}><td>{new Date(`${item.date}T00:00:00`).toLocaleDateString()}</td><td>{employees.find((employee) => employee.id === item.employee_id)?.name ?? `Employee #${item.employee_id}`}</td><td>{item.status}</td><td>{item.approval_status}</td><td>{item.reason}</td></tr>)}</tbody></table></div> : <div className="empty-state">No availability overrides have been saved yet.</div>}
     </section>
     {validation && <section className="panel"><div className="panel-heading"><div><p className="eyebrow">Roster validation</p><h3>{validation.is_valid ? "No validation errors" : "Coverage or validation issues found"}</h3></div><span className={`count-badge ${validation.error_count ? "text-red" : "text-green"}`}>{validation.error_count} errors</span></div><p className="muted">Solver result: {solverStatus || "saved roster validation"} · {validation.warning_count} warning(s); affected dates: {validation.affected_dates.join(", ") || "none"}.</p>{validation.diagnostics.slice(0, 20).map((item, index) => <div className={`diagnostic ${item.severity}`} key={`${item.code}-${index}`}><span>{item.code}</span><p>{item.message}</p><small>{item.target_date ?? "Roster-wide"}{item.employee_id ? ` · employee #${item.employee_id}` : ""}</small></div>)}</section>}
   </div>;
