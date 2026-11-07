@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useState } from "react";
+import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   AlertTriangle,
@@ -307,11 +307,13 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
   const [overrides, setOverrides] = useState<AvailabilityOverride[]>([]);
   const [loadingOverrides, setLoadingOverrides] = useState(true);
   const [overridesError, setOverridesError] = useState("");
+  const overridesRequestId = useRef(0);
   const [validation, setValidation] = useState<RosterValidation | null>(null);
   const [solverStatus, setSolverStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function loadOverrides() {
+    const requestId = ++overridesRequestId.current;
     setLoadingOverrides(true);
     setOverridesError("");
     try {
@@ -319,14 +321,16 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
         "/api/availability-overrides?limit=200",
         token,
       );
-      setOverrides(result.items);
+      if (requestId === overridesRequestId.current) setOverrides(result.items);
     } catch (reasonValue) {
       const message = reasonValue instanceof Error ? reasonValue.message : "Unable to load saved availability";
-      setOverridesError(message === "Failed to fetch"
-        ? "Could not reach the server to load saved availability. Check your connection and try again."
-        : message);
+      if (requestId === overridesRequestId.current) {
+        setOverridesError(message === "Failed to fetch"
+          ? "Could not reach the server to load saved availability. Check your connection and try again."
+          : message);
+      }
     } finally {
-      setLoadingOverrides(false);
+      if (requestId === overridesRequestId.current) setLoadingOverrides(false);
     }
   }
 
@@ -347,6 +351,8 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
           approval_status: "approved",
         }),
       });
+      overridesRequestId.current += 1;
+      setLoadingOverrides(false);
       setOverridesError("");
       setOverrides((current) => [result, ...current.filter((item) => item.id !== result.id)]);
       if (roster && rows.length) {
