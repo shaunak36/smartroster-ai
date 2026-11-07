@@ -55,7 +55,13 @@ def list_employees(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
-    items, total = page_query(db, Employee, offset, limit)
+    items, total = page_query(
+        db,
+        Employee,
+        offset,
+        limit,
+        order_by=(Employee.updated_at.desc(), Employee.id.desc()),
+    )
     return _page(items, total, offset, limit, EmployeeRead)
 
 

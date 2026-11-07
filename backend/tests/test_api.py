@@ -1,7 +1,7 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
-from app.api.routes.organization import create_employee
-from app.models import Organization, UserRole
+from app.api.routes.organization import create_employee, list_employees
+from app.models import Employee, Organization, UserRole
 from app.schemas.api import EmployeeCreate
 from app.services.auth import OrganizationContext
 
@@ -26,6 +26,40 @@ def test_create_employee_sets_authenticated_organization(db_session):
     )
 
     assert employee.organization_id == organization.id
+
+
+def test_employee_list_puts_most_recent_changes_first(db_session):
+    organization = Organization(name="Employee Ordering Organization", is_active=True)
+    db_session.add(organization)
+    db_session.flush()
+    older_change = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    newer_change = datetime(2026, 1, 2, tzinfo=timezone.utc)
+    db_session.add_all([
+        Employee(
+            organization_id=organization.id,
+            employee_code="EMP-OLDER",
+            name="Older Employee",
+            email="older@example.com",
+            created_at=older_change,
+            updated_at=older_change,
+        ),
+        Employee(
+            organization_id=organization.id,
+            employee_code="EMP-NEWER",
+            name="Newer Employee",
+            email="newer@example.com",
+            created_at=older_change,
+            updated_at=newer_change,
+        ),
+    ])
+    db_session.commit()
+
+    page = list_employees(offset=0, limit=50, db=db_session)
+
+    assert [item["employee_code"] for item in page["items"]] == [
+        "EMP-NEWER",
+        "EMP-OLDER",
+    ]
 
 
 def employee_payload(code: str = "EMP-API"):

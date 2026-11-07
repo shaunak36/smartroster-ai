@@ -53,10 +53,19 @@ def commit_or_conflict(session: Session, message: str = "The record conflicts wi
         raise conflict(message) from exc
 
 
-def page_query(session: Session, model: Any, offset: int, limit: int):
+def page_query(
+    session: Session,
+    model: Any,
+    offset: int,
+    limit: int,
+    order_by: tuple[Any, ...] | None = None,
+):
     total = session.scalar(select(func.count()).select_from(model)) or 0
     items = session.scalars(
-        select(model).order_by(model.id).offset(offset).limit(limit)
+        select(model)
+        .order_by(*(order_by or (model.id,)))
+        .offset(offset)
+        .limit(limit)
     ).all()
     return items, total
 
