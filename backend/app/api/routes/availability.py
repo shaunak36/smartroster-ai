@@ -142,7 +142,12 @@ def list_availability_overrides(employee_id: int | None = None, offset: int = Qu
     query = select(EmployeeAvailabilityOverride)
     if employee_id is not None:
         query = query.where(EmployeeAvailabilityOverride.employee_id == employee_id)
-    return paged(db, query, EmployeeAvailabilityOverride, offset, limit)
+    page = paged(db, query, EmployeeAvailabilityOverride, offset, limit)
+    page["items"] = [
+        AvailabilityOverrideRead.model_validate(item).model_dump(mode="json")
+        for item in page["items"]
+    ]
+    return page
 
 
 @router.post("/availability-overrides", response_model=AvailabilityOverrideRead, status_code=201)
