@@ -347,6 +347,7 @@ function Availability({ employees, token, roster, rows, onError, onNotice }: { e
           approval_status: "approved",
         }),
       });
+      setOverridesError("");
       setOverrides((current) => [result, ...current.filter((item) => item.id !== result.id)]);
       if (roster && rows.length) {
         const checked = await request<RosterValidation>("/api/rosters/validate", token, {
